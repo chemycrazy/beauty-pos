@@ -7,7 +7,7 @@ from datetime import datetime
 import platform
 
 # --- CONFIGURACIÓN ---
-#⚠️ ASEGÚRATE DE QUE TU CONTRASEÑA AQUÍ SEA LA CORRECTA
+#⚠️ PON TU CONTRASEÑA AQUÍ
 URL_CONEXION = "postgresql://postgres.swavrpqagshyddhjaipf:R57667115#g@aws-0-us-west-2.pooler.supabase.com:6543/postgres"
 
 # VARIABLES GLOBALES
@@ -44,10 +44,10 @@ def main(page: ft.Page):
             if res and bcrypt.checkpw(pwd.encode(), res[1].encode()):
                 usuario_actual_id = res[0]
                 usuario_actual_nombre = user
-                # 🛡️ CORRECCIÓN CLAVE: Limpiamos el rol para evitar errores de mayúsculas/espacios
-                usuario_actual_rol = str(res[2]).strip().lower() 
+                # Normalizamos el rol (minúsculas y sin espacios)
+                usuario_actual_rol = str(res[2]).strip().lower()
                 
-                print(f"DEBUG: Usuario: {user}, Rol detectado: '{usuario_actual_rol}'") # Mensaje para consola de Render
+                print(f"DEBUG: Rol detectado: {usuario_actual_rol}") # Para ver en logs
                 
                 page.clean()
                 construir_interfaz() 
@@ -57,7 +57,6 @@ def main(page: ft.Page):
         except Exception as err:
             lbl_error_login.value = f"Error: {err}"
             btn_login.text = "ENTRAR"
-            print(f"DEBUG ERROR: {err}")
         page.update()
 
     txt_user_login = ft.TextField(label="Usuario", width=300)
@@ -76,7 +75,17 @@ def main(page: ft.Page):
     # ==========================================
     def construir_interfaz():
         
-        # --- FUNCIONES ---
+        # --- FUNCIÓN CERRAR SESIÓN ---
+        def cerrar_sesion(e):
+            global usuario_actual_id, usuario_actual_nombre, usuario_actual_rol
+            usuario_actual_id = None
+            usuario_actual_nombre = ""
+            usuario_actual_rol = ""
+            page.clean()
+            page.add(vista_login)
+            page.update()
+
+        # --- FUNCIONES AUXILIARES VENTA ---
         def enviar_whatsapp(telefono, nombre_prod, precio):
             if not telefono: return
             tel = telefono.strip().replace(" ", "").replace("-", "")
@@ -87,42 +96,26 @@ def main(page: ft.Page):
         def finalizar_venta(e):
             global id_variante_seleccionada, precio_venta_seleccionado
             tel = txt_tel.value.strip()
-            
-            # Feedback visual
-            btn_cobrar.text = "Procesando..."
-            btn_cobrar.disabled = True
-            page.update()
+            btn_cobrar.disabled = True; page.update()
 
             try:
                 conn = psycopg2.connect(URL_CONEXION); cur = conn.cursor()
                 cur.execute("UPDATE inventario SET stock_actual = stock_actual - 1 WHERE variante_id = %s AND stock_actual > 0 RETURNING stock_actual", (id_variante_seleccionada,))
                 res = cur.fetchone()
-                
                 if res:
                     cur.execute("INSERT INTO ventas (usuario_id, variante_id, precio_venta, cliente_telefono) VALUES (%s, %s, %s, %s)", 
                                 (usuario_actual_id, id_variante_seleccionada, precio_venta_seleccionado, tel))
                     conn.commit()
-                    
                     if tel: enviar_whatsapp(tel, nombre_producto_seleccionado, precio_venta_seleccionado)
-                    
-                    page.snack_bar = ft.SnackBar(ft.Text(f"✅ Venta OK. Stock: {res[0]}"), bgcolor="green")
-                    page.snack_bar.open = True
-                    
-                    # Limpiar
+                    page.snack_bar = ft.SnackBar(ft.Text(f"✅ Venta OK. Restan: {res[0]}"), bgcolor="green"); page.snack_bar.open = True
                     txt_busqueda.value=""; info_prod.value=""; btn_cobrar.visible=False; txt_tel.visible=False; txt_tel.value=""
-                    
-                    # Actualizar reportes si corresponde
-                    if usuario_actual_rol in ["gerente", "admin"]: 
-                        cargar_reporte()
+                    if usuario_actual_rol in ["gerente", "admin", "gerente de tienda"]: 
+                        cargar_reporte(); cargar_inv()
                 else:
                     page.snack_bar = ft.SnackBar(ft.Text("⚠️ Sin Stock"), bgcolor="red"); page.snack_bar.open = True
                 conn.close()
-            except Exception as err: 
-                print(err)
-            
-            btn_cobrar.text = "COBRAR"
-            btn_cobrar.disabled = False
-            page.update()
+            except Exception as err: print(err)
+            btn_cobrar.disabled = False; page.update()
 
         def buscar_prod(e):
             global id_variante_seleccionada, precio_venta_seleccionado, nombre_producto_seleccionado
@@ -135,31 +128,22 @@ def main(page: ft.Page):
                 if r:
                     id_variante_seleccionada=r[0]; nombre_producto_seleccionado=f"{r[1]} {r[2]}"; precio_venta_seleccionado=float(r[3])
                     info_prod.value = f"{r[1]} {r[2]}\nPrecio: ${r[3]}\nStock: {r[4]}"
-                    if r[4] > 0: 
-                        btn_cobrar.visible=True; txt_tel.visible=True; btn_cobrar.disabled=False
-                    else: 
-                        info_prod.value += " (AGOTADO)"; btn_cobrar.visible=False
+                    if r[4] > 0: btn_cobrar.visible=True; txt_tel.visible=True; btn_cobrar.disabled=False
+                    else: info_prod.value += " (AGOTADO)"; btn_cobrar.visible=False
                 else: info_prod.value = "No encontrado"; btn_cobrar.visible=False
             except: pass
             page.update()
 
-        # VISTA VENDER
+        # --- VISTAS (PESTAÑAS) ---
+
+        # 1. VENDER
         txt_busqueda = ft.TextField(label="Buscar Tono", on_submit=buscar_prod)
         info_prod = ft.Text("", size=18, weight="bold")
         txt_tel = ft.TextField(label="WhatsApp Cliente", keyboard_type=ft.KeyboardType.PHONE, visible=False)
         btn_cobrar = ft.ElevatedButton("COBRAR", bgcolor="green", color="white", visible=False, on_click=finalizar_venta, height=50)
-        
-        vista_ventas = ft.Column([
-            ft.Text("Punto de Venta", size=25, weight="bold"), 
-            txt_busqueda, 
-            ft.ElevatedButton("BUSCAR", on_click=buscar_prod), 
-            ft.Divider(), 
-            info_prod, 
-            txt_tel, 
-            btn_cobrar
-        ])
+        vista_ventas = ft.Column([ft.Text("Punto de Venta", size=25), txt_busqueda, ft.ElevatedButton("BUSCAR", on_click=buscar_prod), ft.Divider(), info_prod, txt_tel, btn_cobrar])
 
-        # VISTA REPORTES
+        # 2. REPORTES
         col_reporte = ft.Column(scroll="always", expand=True)
         def cargar_reporte():
             col_reporte.controls.clear()
@@ -169,69 +153,69 @@ def main(page: ft.Page):
                 total = 0
                 for r in c.fetchall():
                     total += float(r[1])
-                    col_reporte.controls.append(ft.Container(
-                        padding=10, 
-                        border=ft.border.only(bottom=ft.border.BorderSide(1, "grey")),
-                        content=ft.Row([
-                            ft.Text(f"{r[0]}"),
-                            ft.Text(f"${r[1]}"),
-                            ft.Icon(ft.Icons.PHONE if r[2] else ft.Icons.PHONE_DISABLED, size=15)
-                        ], alignment="spaceBetween")
-                    ))
-                col_reporte.controls.insert(0, ft.Container(
-                    bgcolor="green", padding=10, border_radius=5,
-                    content=ft.Text(f"Total Hoy: ${total:,.2f}", size=20, weight="bold", color="white")
-                ))
+                    col_reporte.controls.append(ft.Text(f"{r[0]} - ${r[1]} (Tel: {r[2]})"))
+                col_reporte.controls.insert(0, ft.Text(f"Total Hoy: ${total:,.2f}", size=20, weight="bold", color="green"))
                 conn.close()
             except: pass
             page.update()
-        
-        vista_reportes = ft.Column([
-            ft.Text("Corte de Caja", size=25), 
-            ft.ElevatedButton("Actualizar", icon=ft.Icons.REFRESH, on_click=lambda e: cargar_reporte()), 
-            col_reporte
-        ])
+        vista_reportes = ft.Column([ft.Text("Corte de Caja", size=25), ft.ElevatedButton("Actualizar", on_click=lambda e: cargar_reporte()), col_reporte])
 
-        # VISTA AGREGAR (Simplificada para móvil)
-        txt_new_sku = ft.TextField(label="SKU")
-        txt_new_tono = ft.TextField(label="Tono")
-        txt_new_precio = ft.TextField(label="Precio", keyboard_type="number")
-        txt_new_stock = ft.TextField(label="Stock", keyboard_type="number")
-        
+        # 3. AGREGAR
+        txt_new_sku = ft.TextField(label="SKU"); txt_new_tono = ft.TextField(label="Tono"); txt_new_precio = ft.TextField(label="Precio", keyboard_type="number"); txt_new_stock = ft.TextField(label="Stock", keyboard_type="number")
         def guardar_nuevo(e):
-            # Aquí deberías implementar la lógica de guardado real
-            # Por simplicidad en web, solo mostramos el aviso
-            page.snack_bar = ft.SnackBar(ft.Text("Función completa disponible en PC"), bgcolor="orange")
-            page.snack_bar.open = True
+            page.snack_bar = ft.SnackBar(ft.Text("Función simplificada para web"), bgcolor="orange"); page.snack_bar.open=True; page.update()
+        vista_agregar = ft.Column([ft.Text("Nuevo Producto", size=25), txt_new_sku, txt_new_tono, txt_new_precio, txt_new_stock, ft.ElevatedButton("GUARDAR", on_click=guardar_nuevo)])
+
+        # 4. INVENTARIO (Faltaba esta vista)
+        col_inv = ft.Column(scroll="always", expand=True)
+        def cargar_inv():
+            col_inv.controls.clear()
+            try:
+                conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
+                c.execute("SELECT p.nombre, v.numero_tono, i.stock_actual FROM variantes v JOIN productos p ON v.producto_id=p.id JOIN inventario i ON v.id=i.variante_id ORDER BY p.nombre")
+                for r in c.fetchall():
+                    col_inv.controls.append(ft.Container(padding=10, border=ft.border.all(1, "grey"), content=ft.Text(f"{r[0]} - {r[1]}: {r[2]} pzas")))
+                conn.close()
+            except: pass
             page.update()
+        vista_inv = ft.Column([ft.Text("Inventario Global", size=25), ft.ElevatedButton("Refrescar", on_click=lambda e: cargar_inv()), col_inv])
 
-        vista_agregar = ft.Column([
-            ft.Text("Nuevo Producto", size=25),
-            txt_new_sku, txt_new_tono, txt_new_precio, txt_new_stock,
-            ft.ElevatedButton("GUARDAR", on_click=guardar_nuevo)
-        ])
+        # 5. USUARIOS (Faltaba esta vista)
+        col_usuarios = ft.Column(scroll="always", expand=True)
+        def cargar_usuarios():
+            col_usuarios.controls.clear()
+            try:
+                conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
+                c.execute("SELECT username, rol FROM usuarios")
+                for r in c.fetchall():
+                    col_usuarios.controls.append(ft.Text(f"- {r[0]} ({r[1]})"))
+                conn.close()
+            except: pass
+            page.update()
+        vista_users = ft.Column([ft.Text("Lista de Usuarios", size=25), ft.ElevatedButton("Refrescar", on_click=lambda e: cargar_usuarios()), col_usuarios])
 
-        # --- ARMADO DE PESTAÑAS ---
-        # 1. Pestaña por defecto (Todos la ven)
+        # --- ARMADO DE PESTAÑAS (SEGÚN ROL) ---
         tabs = [ft.Tab(text="Vender", icon=ft.Icons.MONEY, content=ft.Container(padding=20, content=vista_ventas))]
         
-        # 2. Lógica de Roles BLINDADA
-        # Convertimos todo a minúsculas para comparar
-        rol_seguro = usuario_actual_rol.lower().strip()
+        # Permitimos variaciones del nombre del rol para que no falle
+        roles_permitidos = ["gerente", "admin", "gerente de tienda", "administrador"]
         
-        if rol_seguro in ["admin", "gerente", "gerente de tienda"]:
-            tabs.append(ft.Tab(text="Reportes", icon=ft.Icons.LIST, content=ft.Container(padding=20, content=vista_reportes)))
-            tabs.append(ft.Tab(text="Agregar", icon=ft.Icons.ADD, content=ft.Container(padding=20, content=vista_agregar)))
-            cargar_reporte()
+        if usuario_actual_rol in roles_permitidos:
+            tabs.append(ft.Tab(text="Reportes", icon=ft.Icons.ASSESSMENT, content=ft.Container(padding=20, content=vista_reportes)))
+            tabs.append(ft.Tab(text="Inventario", icon=ft.Icons.LIST, content=ft.Container(padding=20, content=vista_inv)))
+            tabs.append(ft.Tab(text="Agregar", icon=ft.Icons.ADD_BOX, content=ft.Container(padding=20, content=vista_agregar)))
+            # Cargar datos iniciales
+            cargar_reporte(); cargar_inv()
 
-        if rol_seguro == "admin":
-            # Pestaña extra solo para admin si quisieras agregar gestión de usuarios
-            tabs.append(ft.Tab(text="Usuarios", icon=ft.Icons.PEOPLE, content=ft.Container(padding=20, content=ft.Text("Gestión de Usuarios (PC)"))))
+        if "admin" in usuario_actual_rol: # Si dice 'admin' o 'administrador'
+            tabs.append(ft.Tab(text="Usuarios", icon=ft.Icons.PEOPLE, content=ft.Container(padding=20, content=vista_users)))
+            cargar_usuarios()
 
         page.add(
             ft.Row([
                 ft.Text(f"Hola, {usuario_actual_nombre}", weight="bold"), 
-                ft.IconButton(ft.Icons.EXIT_TO_APP, on_click=lambda e: page.window_close())
+                # Botón de SALIR ahora llama a cerrar_sesion
+                ft.IconButton(ft.Icons.LOGOUT, on_click=cerrar_sesion, tooltip="Cerrar Sesión")
             ], alignment="spaceBetween"),
             ft.Tabs(tabs=tabs, expand=1)
         )
