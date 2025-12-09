@@ -70,7 +70,7 @@ def main(page: ft.Page):
         alignment=ft.alignment.center, padding=20,
         content=ft.Column([
             ft.Container(height=50),
-            ft.Icon(name="spa", size=80, color="purple"), # USAMOS "spa" TEXTO
+            ft.Icon(name="spa", size=80, color="purple"),
             ft.Text("Beauty POS", size=30, weight="bold"), 
             ft.Container(height=30),
             txt_user_login, txt_pass_login, 
@@ -137,7 +137,6 @@ def main(page: ft.Page):
         
         vista_ventas = ft.ListView(expand=True, padding=20, spacing=15, controls=[
             ft.Text("Punto de Venta", size=25, weight="bold"),
-            # USAMOS TEXTO "search" PARA EL ICONO
             ft.Row([txt_busqueda, ft.IconButton(icon="search", on_click=buscar_prod, icon_color="purple")]),
             ft.Divider(), info_prod, txt_tel, btn_cobrar
         ])
@@ -147,7 +146,16 @@ def main(page: ft.Page):
             col_reporte.controls.clear()
             try:
                 conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                c.execute("SELECT TO_CHAR(fecha, 'HH24:MI'), precio_venta, cliente_telefono, p.nombre FROM ventas JOIN variantes v ON ventas.variante_id = v.id JOIN productos p ON v.producto_id = p.id WHERE DATE(fecha)=CURRENT_DATE ORDER BY fecha DESC")
+                # 🛡️ CORRECCIÓN AQUÍ: Usamos 'ventas.precio_venta' para evitar ambigüedad
+                query = """
+                    SELECT TO_CHAR(ventas.fecha, 'HH24:MI'), ventas.precio_venta, ventas.cliente_telefono, p.nombre 
+                    FROM ventas 
+                    JOIN variantes v ON ventas.variante_id = v.id 
+                    JOIN productos p ON v.producto_id = p.id 
+                    WHERE DATE(ventas.fecha) = CURRENT_DATE 
+                    ORDER BY ventas.fecha DESC
+                """
+                c.execute(query)
                 total = 0
                 for r in c.fetchall():
                     total += float(r[1])
@@ -160,7 +168,6 @@ def main(page: ft.Page):
             except Exception as e: col_reporte.controls.append(ft.Text(f"Error carga: {e}", color="red"))
             page.update()
         
-        # ICONO REFRESH COMO TEXTO
         vista_reportes = ft.ListView(expand=True, padding=20, spacing=10, controls=[
             ft.Text("Corte de Caja", size=25, weight="bold"),
             ft.ElevatedButton("Actualizar", icon="refresh", on_click=lambda e: cargar_reporte()),
@@ -172,6 +179,8 @@ def main(page: ft.Page):
         txt_new_precio = ft.TextField(label="Precio", keyboard_type="number")
         txt_new_stock = ft.TextField(label="Stock", keyboard_type="number")
         def guardar_nuevo(e):
+            # Aquí va la lógica real de guardado si la activamos en web
+            # Por ahora mensaje de seguridad
             page.snack_bar = ft.SnackBar(ft.Text("Función disponible en PC"), bgcolor="orange"); page.snack_bar.open=True; page.update()
 
         vista_agregar = ft.ListView(expand=True, padding=20, spacing=15, controls=[
@@ -221,7 +230,6 @@ def main(page: ft.Page):
         def cambiar_tab(e):
             idx = e.control.selected_index
             if idx == 0: cuerpo_principal.content = vista_ventas
-            # Mapeo manual simple
             label_sel = destinos[idx].label
             if label_sel == "Corte": cuerpo_principal.content = vista_reportes; cargar_reporte()
             elif label_sel == "Stock": cuerpo_principal.content = vista_inv; cargar_inv()
@@ -229,7 +237,6 @@ def main(page: ft.Page):
             elif label_sel == "Users": cuerpo_principal.content = vista_users; cargar_users()
             page.update()
 
-        # ICONOS COMO TEXTO ("money", "assessment", etc.)
         destinos = [ft.NavigationDestination(icon="money", label="Vender")]
         
         rol_seguro = usuario_actual_rol.lower().strip()
@@ -263,5 +270,4 @@ def main(page: ft.Page):
 
     page.add(vista_login)
 
-# LÍNEA MÁGICA
 ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(os.environ.get("PORT", 8080)), host="0.0.0.0")
