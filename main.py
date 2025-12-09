@@ -5,7 +5,7 @@ import os
 import urllib.parse
 from datetime import datetime
 import platform
-import traceback # Para ver el detalle del error
+import traceback
 
 # --- CONFIGURACIÓN ---
 # ⚠️ PON TU CONTRASEÑA AQUÍ
@@ -17,7 +17,7 @@ id_variante_seleccionada = None; precio_venta_seleccionado = 0.0; nombre_product
 
 def main(page: ft.Page):
     page.title = "Beauty POS App"
-    page.scroll = None # Importante para layout de App
+    page.scroll = None 
     page.theme_mode = ft.ThemeMode.LIGHT
     page.bgcolor = "#ffffff"
     page.padding = 0
@@ -47,26 +47,18 @@ def main(page: ft.Page):
                 usuario_actual_rol = str(res[2]).strip().lower()
                 
                 page.clean()
-                # INTENTAMOS CONSTRUIR LA INTERFAZ DENTRO DE UN BLOQUE SEGURO
                 try:
                     construir_interfaz()
                 except Exception as ex:
-                    # SI FALLA, MOSTRAMOS EL ERROR EN PANTALLA
                     page.add(ft.Column([
-                        ft.Icon(ft.Icons.ERROR, color="red", size=50),
-                        ft.Text("Ocurrió un error al cargar la App:", color="red", size=20, weight="bold"),
-                        ft.Text(f"{ex}", color="black"),
-                        ft.Text(traceback.format_exc(), size=10, color="grey") # Detalle técnico
-                    ], scroll="auto", expand=True, alignment="center"))
+                        ft.Icon(name="error", color="red", size=50),
+                        ft.Text(f"Error cargando App: {ex}", color="red")
+                    ]))
                     page.update()
             else:
-                lbl_error_login.value = "❌ Datos incorrectos"
-                btn_login.text = "ENTRAR"
-                btn_login.disabled = False
+                lbl_error_login.value = "❌ Datos incorrectos"; btn_login.text = "ENTRAR"; btn_login.disabled = False
         except Exception as err:
-            lbl_error_login.value = f"Error de Conexión: {err}"
-            btn_login.text = "ENTRAR"
-            btn_login.disabled = False
+            lbl_error_login.value = f"Error: {err}"; btn_login.text = "ENTRAR"; btn_login.disabled = False
         page.update()
 
     txt_user_login = ft.TextField(label="Usuario", width=300)
@@ -75,11 +67,10 @@ def main(page: ft.Page):
     lbl_error_login = ft.Text("", color="red")
 
     vista_login = ft.Container(
-        alignment=ft.alignment.center,
-        padding=20,
+        alignment=ft.alignment.center, padding=20,
         content=ft.Column([
             ft.Container(height=50),
-            ft.Icon(ft.Icons.SPA, size=80, color="purple"),
+            ft.Icon(name="spa", size=80, color="purple"), # USAMOS "spa" TEXTO
             ft.Text("Beauty POS", size=30, weight="bold"), 
             ft.Container(height=30),
             txt_user_login, txt_pass_login, 
@@ -146,7 +137,8 @@ def main(page: ft.Page):
         
         vista_ventas = ft.ListView(expand=True, padding=20, spacing=15, controls=[
             ft.Text("Punto de Venta", size=25, weight="bold"),
-            ft.Row([txt_busqueda, ft.IconButton(ft.Icons.SEARCH, on_click=buscar_prod, icon_color="purple")]),
+            # USAMOS TEXTO "search" PARA EL ICONO
+            ft.Row([txt_busqueda, ft.IconButton(icon="search", on_click=buscar_prod, icon_color="purple")]),
             ft.Divider(), info_prod, txt_tel, btn_cobrar
         ])
 
@@ -168,13 +160,13 @@ def main(page: ft.Page):
             except Exception as e: col_reporte.controls.append(ft.Text(f"Error carga: {e}", color="red"))
             page.update()
         
+        # ICONO REFRESH COMO TEXTO
         vista_reportes = ft.ListView(expand=True, padding=20, spacing=10, controls=[
             ft.Text("Corte de Caja", size=25, weight="bold"),
-            ft.ElevatedButton("Actualizar", icon=ft.Icons.REFRESH, on_click=lambda e: cargar_reporte()),
+            ft.ElevatedButton("Actualizar", icon="refresh", on_click=lambda e: cargar_reporte()),
             col_reporte
         ])
 
-        # VISTA AGREGAR
         txt_new_sku = ft.TextField(label="SKU")
         txt_new_tono = ft.TextField(label="Tono")
         txt_new_precio = ft.TextField(label="Precio", keyboard_type="number")
@@ -188,7 +180,6 @@ def main(page: ft.Page):
             ft.ElevatedButton("GUARDAR (Solo PC)", on_click=guardar_nuevo, height=50)
         ])
 
-        # VISTA INVENTARIO
         col_inv = ft.Column()
         def cargar_inv():
             col_inv.controls.clear()
@@ -207,7 +198,6 @@ def main(page: ft.Page):
             col_inv
         ])
 
-        # VISTA USUARIOS
         col_users = ft.Column()
         def cargar_users():
             col_users.controls.clear()
@@ -226,50 +216,44 @@ def main(page: ft.Page):
         ])
 
         # --- NAVEGACIÓN ---
-        # Contenedor principal
         cuerpo_principal = ft.Container(content=vista_ventas, expand=True)
 
         def cambiar_tab(e):
             idx = e.control.selected_index
             if idx == 0: cuerpo_principal.content = vista_ventas
-            # Lógica para mapear pestañas extra (depende de cuántas haya)
-            # Como la lista de destinos es dinámica, usamos un truco simple:
-            # Buscamos el label del destino seleccionado
+            # Mapeo manual simple
             label_sel = destinos[idx].label
-            
             if label_sel == "Corte": cuerpo_principal.content = vista_reportes; cargar_reporte()
             elif label_sel == "Stock": cuerpo_principal.content = vista_inv; cargar_inv()
             elif label_sel == "Alta": cuerpo_principal.content = vista_agregar
             elif label_sel == "Users": cuerpo_principal.content = vista_users; cargar_users()
-            
             page.update()
 
-        # Construcción dinámica de botones
-        destinos = [ft.NavigationDestination(icon=ft.Icons.MONEY, label="Vender")]
+        # ICONOS COMO TEXTO ("money", "assessment", etc.)
+        destinos = [ft.NavigationDestination(icon="money", label="Vender")]
         
-        roles_permitidos = ["gerente", "admin", "gerente de tienda", "administrador"]
+        rol_seguro = usuario_actual_rol.lower().strip()
         
-        if usuario_actual_rol in roles_permitidos:
-            destinos.append(ft.NavigationDestination(icon=ft.Icons.ASSESSMENT, label="Corte"))
-            destinos.append(ft.NavigationDestination(icon=ft.Icons.LIST, label="Stock"))
-            destinos.append(ft.NavigationDestination(icon=ft.Icons.ADD_BOX, label="Alta"))
+        if rol_seguro in ["admin", "gerente", "gerente de tienda", "administrador"]:
+            destinos.append(ft.NavigationDestination(icon="assessment", label="Corte"))
+            destinos.append(ft.NavigationDestination(icon="list", label="Stock"))
+            destinos.append(ft.NavigationDestination(icon="add_box", label="Alta"))
 
-        if "admin" in usuario_actual_rol:
-            destinos.append(ft.NavigationDestination(icon=ft.Icons.PEOPLE, label="Users"))
+        if "admin" in rol_seguro:
+            destinos.append(ft.NavigationDestination(icon="people", label="Users"))
 
         nav_bar = ft.NavigationBar(destinations=destinos, on_change=cambiar_tab, bgcolor="white", selected_index=0)
 
         def cerrar_sesion(e):
             global usuario_actual_id; usuario_actual_id = None; page.clean(); page.add(vista_login)
 
-        # AGREGAMOS TODO A LA PÁGINA
         page.add(
             ft.Column(
                 expand=True, spacing=0,
                 controls=[
                     ft.Container(padding=10, bgcolor="purple", content=ft.Row([
                         ft.Text(f"Hola, {usuario_actual_nombre}", weight="bold", color="white"),
-                        ft.IconButton(ft.Icons.LOGOUT, icon_color="white", on_click=cerrar_sesion)
+                        ft.IconButton(icon="logout", icon_color="white", on_click=cerrar_sesion)
                     ], alignment="spaceBetween")),
                     cuerpo_principal,
                     nav_bar
@@ -277,7 +261,7 @@ def main(page: ft.Page):
             )
         )
 
-    # AL INICIO
     page.add(vista_login)
 
+# LÍNEA MÁGICA
 ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(os.environ.get("PORT", 8080)), host="0.0.0.0")
