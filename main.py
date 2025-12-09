@@ -146,16 +146,8 @@ def main(page: ft.Page):
             col_reporte.controls.clear()
             try:
                 conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                # 🛡️ CORRECCIÓN AQUÍ: Usamos 'ventas.precio_venta' para evitar ambigüedad
-                query = """
-                    SELECT TO_CHAR(ventas.fecha, 'HH24:MI'), ventas.precio_venta, ventas.cliente_telefono, p.nombre 
-                    FROM ventas 
-                    JOIN variantes v ON ventas.variante_id = v.id 
-                    JOIN productos p ON v.producto_id = p.id 
-                    WHERE DATE(ventas.fecha) = CURRENT_DATE 
-                    ORDER BY ventas.fecha DESC
-                """
-                c.execute(query)
+                # CONSULTA CORREGIDA (ventas.precio_venta)
+                c.execute("SELECT TO_CHAR(ventas.fecha, 'HH24:MI'), ventas.precio_venta, ventas.cliente_telefono, p.nombre FROM ventas JOIN variantes v ON ventas.variante_id = v.id JOIN productos p ON v.producto_id = p.id WHERE DATE(ventas.fecha)=CURRENT_DATE ORDER BY ventas.fecha DESC")
                 total = 0
                 for r in c.fetchall():
                     total += float(r[1])
@@ -174,13 +166,12 @@ def main(page: ft.Page):
             col_reporte
         ])
 
+        # VISTA AGREGAR
         txt_new_sku = ft.TextField(label="SKU")
         txt_new_tono = ft.TextField(label="Tono")
         txt_new_precio = ft.TextField(label="Precio", keyboard_type="number")
         txt_new_stock = ft.TextField(label="Stock", keyboard_type="number")
         def guardar_nuevo(e):
-            # Aquí va la lógica real de guardado si la activamos en web
-            # Por ahora mensaje de seguridad
             page.snack_bar = ft.SnackBar(ft.Text("Función disponible en PC"), bgcolor="orange"); page.snack_bar.open=True; page.update()
 
         vista_agregar = ft.ListView(expand=True, padding=20, spacing=15, controls=[
@@ -189,6 +180,7 @@ def main(page: ft.Page):
             ft.ElevatedButton("GUARDAR (Solo PC)", on_click=guardar_nuevo, height=50)
         ])
 
+        # VISTA INVENTARIO
         col_inv = ft.Column()
         def cargar_inv():
             col_inv.controls.clear()
@@ -207,20 +199,75 @@ def main(page: ft.Page):
             col_inv
         ])
 
+        # --- VISTA USUARIOS (RESTAURADA COMPLETA) ---
         col_users = ft.Column()
+        # Campos para crear nuevo usuario
+        txt_u_new = ft.TextField(label="Nuevo Usuario")
+        txt_p_new = ft.TextField(label="Contraseña", password=True)
+        dd_rol = ft.Dropdown(label="Rol", options=[
+            ft.dropdown.Option("vendedor"), 
+            ft.dropdown.Option("gerente"), 
+            ft.dropdown.Option("admin")
+        ], value="vendedor")
+
         def cargar_users():
             col_users.controls.clear()
             try:
                 conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                c.execute("SELECT username, rol FROM usuarios")
-                for r in c.fetchall(): col_users.controls.append(ft.Container(padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, "#eeeeee")), content=ft.Text(f"👤 {r[0]} ({r[1]})", size=16)))
+                c.execute("SELECT id, username, rol FROM usuarios ORDER BY username")
+                for r in c.fetchall():
+                    uid, uname, urol = r
+                    # Fila con nombre y botón de eliminar
+                    col_users.controls.append(
+                        ft.Container(
+                            padding=10, 
+                            border=ft.border.only(bottom=ft.border.BorderSide(1, "#eeeeee")), 
+                            content=ft.Row([
+                                ft.Text(f"👤 {uname} ({urol})", size=16),
+                                ft.IconButton(icon="delete", icon_color="red", on_click=lambda e, x=uid: eliminar_user(x))
+                            ], alignment="spaceBetween")
+                        )
+                    )
                 conn.close()
             except: pass
             page.update()
-        
-        vista_users = ft.ListView(expand=True, padding=20, spacing=10, controls=[
-            ft.Text("Usuarios", size=25, weight="bold"),
-            ft.ElevatedButton("Refrescar", on_click=lambda e: cargar_users()), 
+
+        def eliminar_user(id_borrar):
+            if id_borrar == usuario_actual_id:
+                page.snack_bar = ft.SnackBar(ft.Text("No te puedes borrar a ti mismo"), bgcolor="orange"); page.snack_bar.open=True; page.update(); return
+            try:
+                conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
+                c.execute("DELETE FROM usuarios WHERE id=%s", (id_borrar,))
+                conn.commit(); conn.close()
+                page.snack_bar = ft.SnackBar(ft.Text("Usuario eliminado"), bgcolor="blue"); page.snack_bar.open=True
+                cargar_users()
+            except Exception as e: page.snack_bar = ft.SnackBar(ft.Text(f"Error: {e}"), bgcolor="red"); page.snack_bar.open=True; page.update()
+
+        def crear_user(e):
+            u, p, r = txt_u_new.value, txt_p_new.value, dd_rol.value
+            if not u or not p: return
+            try:
+                h = bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
+                conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
+                c.execute("INSERT INTO usuarios (username, password_hash, rol) VALUES (%s, %s, %s)", (u, h, r))
+                conn.commit(); conn.close()
+                page.snack_bar = ft.SnackBar(ft.Text("Usuario Creado"), bgcolor="green"); page.snack_bar.open=True
+                txt_u_new.value=""; txt_p_new.value=""; cargar_users()
+            except Exception as ex: page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True; page.update()
+
+        # Armado de la vista Users verticalmente
+        vista_users = ft.ListView(expand=True, padding=20, spacing=15, controls=[
+            ft.Text("Gestión Usuarios", size=25, weight="bold"),
+            ft.Text("Crear Nuevo:", weight="bold"),
+            txt_u_new,
+            txt_p_new,
+            dd_rol,
+            ft.ElevatedButton("CREAR USUARIO", on_click=crear_user, height=50),
+            ft.Divider(),
+            ft.Row([
+                ft.Text("Lista Actual", weight="bold", size=18),
+                ft.IconButton(icon="refresh", on_click=lambda e: cargar_users())
+            ], alignment="spaceBetween"),
             col_users
         ])
 
