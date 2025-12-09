@@ -5,6 +5,7 @@ import os
 import urllib.parse
 from datetime import datetime
 import platform
+import traceback # Para ver el detalle del error
 
 # --- CONFIGURACIÓN ---
 # ⚠️ PON TU CONTRASEÑA AQUÍ
@@ -16,11 +17,10 @@ id_variante_seleccionada = None; precio_venta_seleccionado = 0.0; nombre_product
 
 def main(page: ft.Page):
     page.title = "Beauty POS App"
-    # IMPORTANTE: Desactivamos el scroll de la página entera para controlar zonas
-    page.scroll = None 
+    page.scroll = None # Importante para layout de App
     page.theme_mode = ft.ThemeMode.LIGHT
     page.bgcolor = "#ffffff"
-    page.padding = 0 # Sin márgenes para que la barra llegue al borde
+    page.padding = 0
     page.spacing = 0
 
     # ==========================================
@@ -28,18 +28,45 @@ def main(page: ft.Page):
     # ==========================================
     def verificar_login(e):
         global usuario_actual_id, usuario_actual_nombre, usuario_actual_rol
-        user = txt_user_login.value; pwd = txt_pass_login.value
-        btn_login.text = "Entrando..."; page.update()
+        user = txt_user_login.value
+        pwd = txt_pass_login.value
+        btn_login.text = "Cargando..."
+        btn_login.disabled = True
+        page.update()
+
         try:
-            conn = psycopg2.connect(URL_CONEXION); cursor = conn.cursor()
+            conn = psycopg2.connect(URL_CONEXION)
+            cursor = conn.cursor()
             cursor.execute("SELECT id, password_hash, rol FROM usuarios WHERE username = %s", (user,))
-            res = cursor.fetchone(); conn.close()
+            res = cursor.fetchone()
+            conn.close()
+
             if res and bcrypt.checkpw(pwd.encode(), res[1].encode()):
-                usuario_actual_id = res[0]; usuario_actual_nombre = user; 
+                usuario_actual_id = res[0]
+                usuario_actual_nombre = user
                 usuario_actual_rol = str(res[2]).strip().lower()
-                page.clean(); construir_interfaz() 
-            else: lbl_error_login.value = "❌ Datos incorrectos"; btn_login.text = "ENTRAR"
-        except Exception as err: lbl_error_login.value = f"Error: {err}"; btn_login.text = "ENTRAR"
+                
+                page.clean()
+                # INTENTAMOS CONSTRUIR LA INTERFAZ DENTRO DE UN BLOQUE SEGURO
+                try:
+                    construir_interfaz()
+                except Exception as ex:
+                    # SI FALLA, MOSTRAMOS EL ERROR EN PANTALLA
+                    page.add(ft.Column([
+                        ft.Icon(ft.Icons.ERROR, color="red", size=50),
+                        ft.Text("Ocurrió un error al cargar la App:", color="red", size=20, weight="bold"),
+                        ft.Text(f"{ex}", color="black"),
+                        ft.Text(traceback.format_exc(), size=10, color="grey") # Detalle técnico
+                    ], scroll="auto", expand=True, alignment="center"))
+                    page.update()
+            else:
+                lbl_error_login.value = "❌ Datos incorrectos"
+                btn_login.text = "ENTRAR"
+                btn_login.disabled = False
+        except Exception as err:
+            lbl_error_login.value = f"Error de Conexión: {err}"
+            btn_login.text = "ENTRAR"
+            btn_login.disabled = False
         page.update()
 
     txt_user_login = ft.TextField(label="Usuario", width=300)
@@ -58,7 +85,7 @@ def main(page: ft.Page):
             txt_user_login, txt_pass_login, 
             ft.Container(height=20),
             btn_login, lbl_error_login
-        ], horizontal_alignment="center", scroll="auto") # Scroll solo aquí si hace falta
+        ], horizontal_alignment="center", scroll="auto")
     )
 
     # ==========================================
@@ -88,7 +115,7 @@ def main(page: ft.Page):
                     if tel: enviar_whatsapp(tel, nombre_producto_seleccionado, precio_venta_seleccionado)
                     page.snack_bar = ft.SnackBar(ft.Text("✅ Venta OK"), bgcolor="green"); page.snack_bar.open=True
                     txt_busqueda.value=""; info_prod.value=""; btn_cobrar.visible=False; txt_tel.visible=False; txt_tel.value=""
-                    if usuario_actual_rol in ["gerente", "admin"]: cargar_reporte()
+                    if usuario_actual_rol in ["gerente", "admin", "gerente de tienda"]: cargar_reporte()
                 else: page.snack_bar = ft.SnackBar(ft.Text("⚠️ Sin Stock"), bgcolor="red"); page.snack_bar.open=True
                 conn.close()
             except Exception as err: print(err)
@@ -111,26 +138,18 @@ def main(page: ft.Page):
             except: pass
             page.update()
 
-        # --- VISTAS (CONTENEDORES) ---
-        # Usamos ListView para garantizar scroll en celular sin romper layout
-
-        # 1. VENDER
+        # --- VISTAS ---
         txt_busqueda = ft.TextField(label="Buscar Tono", on_submit=buscar_prod)
         info_prod = ft.Text("", size=18, weight="bold")
         txt_tel = ft.TextField(label="WhatsApp Cliente", keyboard_type=ft.KeyboardType.PHONE, visible=False)
         btn_cobrar = ft.ElevatedButton("COBRAR", bgcolor="green", color="white", visible=False, on_click=finalizar_venta, height=50)
         
-        vista_ventas = ft.ListView(
-            expand=True, padding=20, spacing=15,
-            controls=[
-                ft.Text("Punto de Venta", size=25, weight="bold"),
-                ft.Row([txt_busqueda, ft.IconButton(ft.Icons.SEARCH, on_click=buscar_prod, icon_color="purple")]),
-                ft.Divider(),
-                info_prod, txt_tel, btn_cobrar
-            ]
-        )
+        vista_ventas = ft.ListView(expand=True, padding=20, spacing=15, controls=[
+            ft.Text("Punto de Venta", size=25, weight="bold"),
+            ft.Row([txt_busqueda, ft.IconButton(ft.Icons.SEARCH, on_click=buscar_prod, icon_color="purple")]),
+            ft.Divider(), info_prod, txt_tel, btn_cobrar
+        ])
 
-        # 2. REPORTES
         col_reporte = ft.Column()
         def cargar_reporte():
             col_reporte.controls.clear()
@@ -146,19 +165,16 @@ def main(page: ft.Page):
                     ])))
                 col_reporte.controls.insert(0, ft.Container(bgcolor="#e8f5e9", padding=15, border_radius=10, content=ft.Row([ft.Text("Total Hoy:", size=18), ft.Text(f"${total:,.2f}", size=22, weight="bold", color="green")], alignment="spaceBetween")))
                 conn.close()
-            except: pass
+            except Exception as e: col_reporte.controls.append(ft.Text(f"Error carga: {e}", color="red"))
             page.update()
         
-        vista_reportes = ft.ListView(
-            expand=True, padding=20, spacing=10,
-            controls=[
-                ft.Text("Corte de Caja", size=25, weight="bold"),
-                ft.ElevatedButton("Actualizar", icon=ft.Icons.REFRESH, on_click=lambda e: cargar_reporte()),
-                col_reporte
-            ]
-        )
+        vista_reportes = ft.ListView(expand=True, padding=20, spacing=10, controls=[
+            ft.Text("Corte de Caja", size=25, weight="bold"),
+            ft.ElevatedButton("Actualizar", icon=ft.Icons.REFRESH, on_click=lambda e: cargar_reporte()),
+            col_reporte
+        ])
 
-        # 3. AGREGAR
+        # VISTA AGREGAR
         txt_new_sku = ft.TextField(label="SKU")
         txt_new_tono = ft.TextField(label="Tono")
         txt_new_precio = ft.TextField(label="Precio", keyboard_type="number")
@@ -166,16 +182,13 @@ def main(page: ft.Page):
         def guardar_nuevo(e):
             page.snack_bar = ft.SnackBar(ft.Text("Función disponible en PC"), bgcolor="orange"); page.snack_bar.open=True; page.update()
 
-        vista_agregar = ft.ListView(
-            expand=True, padding=20, spacing=15,
-            controls=[
-                ft.Text("Nuevo Producto", size=25, weight="bold"),
-                txt_new_sku, txt_new_tono, txt_new_precio, txt_new_stock,
-                ft.ElevatedButton("GUARDAR (Solo PC)", on_click=guardar_nuevo, height=50)
-            ]
-        )
+        vista_agregar = ft.ListView(expand=True, padding=20, spacing=15, controls=[
+            ft.Text("Nuevo Producto", size=25, weight="bold"),
+            txt_new_sku, txt_new_tono, txt_new_precio, txt_new_stock,
+            ft.ElevatedButton("GUARDAR (Solo PC)", on_click=guardar_nuevo, height=50)
+        ])
 
-        # 4. INVENTARIO
+        # VISTA INVENTARIO
         col_inv = ft.Column()
         def cargar_inv():
             col_inv.controls.clear()
@@ -188,16 +201,13 @@ def main(page: ft.Page):
             except: pass
             page.update()
         
-        vista_inv = ft.ListView(
-            expand=True, padding=20, spacing=10,
-            controls=[
-                ft.Text("Inventario", size=25, weight="bold"),
-                ft.ElevatedButton("Refrescar", on_click=lambda e: cargar_inv()), 
-                col_inv
-            ]
-        )
+        vista_inv = ft.ListView(expand=True, padding=20, spacing=10, controls=[
+            ft.Text("Inventario", size=25, weight="bold"),
+            ft.ElevatedButton("Refrescar", on_click=lambda e: cargar_inv()), 
+            col_inv
+        ])
 
-        # 5. USUARIOS
+        # VISTA USUARIOS
         col_users = ft.Column()
         def cargar_users():
             col_users.controls.clear()
@@ -209,78 +219,65 @@ def main(page: ft.Page):
             except: pass
             page.update()
         
-        vista_users = ft.ListView(
-            expand=True, padding=20, spacing=10,
-            controls=[
-                ft.Text("Usuarios", size=25, weight="bold"),
-                ft.ElevatedButton("Refrescar", on_click=lambda e: cargar_users()), 
-                col_users
-            ]
-        )
+        vista_users = ft.ListView(expand=True, padding=20, spacing=10, controls=[
+            ft.Text("Usuarios", size=25, weight="bold"),
+            ft.ElevatedButton("Refrescar", on_click=lambda e: cargar_users()), 
+            col_users
+        ])
 
-        # --- NAVEGACIÓN (BARRA INFERIOR) ---
-        
-        # Contenedor principal donde cambiaremos el contenido
+        # --- NAVEGACIÓN ---
+        # Contenedor principal
         cuerpo_principal = ft.Container(content=vista_ventas, expand=True)
 
         def cambiar_tab(e):
             idx = e.control.selected_index
             if idx == 0: cuerpo_principal.content = vista_ventas
-            elif idx == 1: cuerpo_principal.content = vista_reportes; cargar_reporte()
-            elif idx == 2: cuerpo_principal.content = vista_inv; cargar_inv()
-            elif idx == 3: cuerpo_principal.content = vista_agregar
-            elif idx == 4: cuerpo_principal.content = vista_users; cargar_users()
+            # Lógica para mapear pestañas extra (depende de cuántas haya)
+            # Como la lista de destinos es dinámica, usamos un truco simple:
+            # Buscamos el label del destino seleccionado
+            label_sel = destinos[idx].label
+            
+            if label_sel == "Corte": cuerpo_principal.content = vista_reportes; cargar_reporte()
+            elif label_sel == "Stock": cuerpo_principal.content = vista_inv; cargar_inv()
+            elif label_sel == "Alta": cuerpo_principal.content = vista_agregar
+            elif label_sel == "Users": cuerpo_principal.content = vista_users; cargar_users()
+            
             page.update()
 
-        # Definimos los botones de la barra inferior según rol
-        destinos = [
-            ft.NavigationDestination(icon=ft.Icons.MONEY, label="Vender"),
-        ]
+        # Construcción dinámica de botones
+        destinos = [ft.NavigationDestination(icon=ft.Icons.MONEY, label="Vender")]
         
-        rol_seguro = usuario_actual_rol.lower().strip()
+        roles_permitidos = ["gerente", "admin", "gerente de tienda", "administrador"]
         
-        if rol_seguro in ["admin", "gerente", "gerente de tienda", "administrador"]:
+        if usuario_actual_rol in roles_permitidos:
             destinos.append(ft.NavigationDestination(icon=ft.Icons.ASSESSMENT, label="Corte"))
             destinos.append(ft.NavigationDestination(icon=ft.Icons.LIST, label="Stock"))
-            # Opcional en móvil para ahorrar espacio:
-            # destinos.append(ft.NavigationDestination(icon=ft.Icons.ADD_BOX, label="Alta"))
+            destinos.append(ft.NavigationDestination(icon=ft.Icons.ADD_BOX, label="Alta"))
 
-        if "admin" in rol_seguro:
+        if "admin" in usuario_actual_rol:
             destinos.append(ft.NavigationDestination(icon=ft.Icons.PEOPLE, label="Users"))
 
-        nav_bar = ft.NavigationBar(
-            destinations=destinos,
-            on_change=cambiar_tab,
-            bgcolor="white",
-            selected_index=0
-        )
+        nav_bar = ft.NavigationBar(destinations=destinos, on_change=cambiar_tab, bgcolor="white", selected_index=0)
 
         def cerrar_sesion(e):
             global usuario_actual_id; usuario_actual_id = None; page.clean(); page.add(vista_login)
 
-        # Estructura final: Encabezado + Cuerpo + Barra Inferior
+        # AGREGAMOS TODO A LA PÁGINA
         page.add(
             ft.Column(
-                expand=True,
-                spacing=0,
+                expand=True, spacing=0,
                 controls=[
-                    # Encabezado pequeño
-                    ft.Container(
-                        padding=10, bgcolor="purple",
-                        content=ft.Row([
-                            ft.Text(f"Hola, {usuario_actual_nombre}", weight="bold", color="white"),
-                            ft.IconButton(ft.Icons.LOGOUT, icon_color="white", on_click=cerrar_sesion)
-                        ], alignment="spaceBetween")
-                    ),
-                    # Cuerpo que cambia
+                    ft.Container(padding=10, bgcolor="purple", content=ft.Row([
+                        ft.Text(f"Hola, {usuario_actual_nombre}", weight="bold", color="white"),
+                        ft.IconButton(ft.Icons.LOGOUT, icon_color="white", on_click=cerrar_sesion)
+                    ], alignment="spaceBetween")),
                     cuerpo_principal,
-                    # Barra navegación
                     nav_bar
                 ]
             )
         )
 
-    # Inicio
+    # AL INICIO
     page.add(vista_login)
 
 ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(os.environ.get("PORT", 8080)), host="0.0.0.0")
