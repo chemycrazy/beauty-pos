@@ -15,6 +15,9 @@ URL_CONEXION = "postgresql://postgres.swavrpqagshyddhjaipf:R57667115#g@aws-0-us-
 usuario_actual_id = None; usuario_actual_nombre = ""; usuario_actual_rol = ""
 id_variante_seleccionada = None; precio_venta_seleccionado = 0.0; nombre_producto_seleccionado = "" 
 
+# VARIABLES PARA EDICIÓN DE STOCK
+id_stock_editar = None
+
 def main(page: ft.Page):
     page.title = "Beauty POS App"
     page.scroll = None 
@@ -45,15 +48,11 @@ def main(page: ft.Page):
                 usuario_actual_id = res[0]
                 usuario_actual_nombre = user
                 usuario_actual_rol = str(res[2]).strip().lower()
-                
                 page.clean()
                 try:
                     construir_interfaz()
                 except Exception as ex:
-                    page.add(ft.Column([
-                        ft.Icon(name="error", color="red", size=50),
-                        ft.Text(f"Error cargando App: {ex}", color="red")
-                    ]))
+                    page.add(ft.Text(f"Error fatal: {ex}", color="red"))
                     page.update()
             else:
                 lbl_error_login.value = "❌ Datos incorrectos"; btn_login.text = "ENTRAR"; btn_login.disabled = False
@@ -84,7 +83,7 @@ def main(page: ft.Page):
     # ==========================================
     def construir_interfaz():
         
-        # --- FUNCIONES ---
+        # --- A. FUNCIONES AUXILIARES ---
         def enviar_whatsapp(telefono, nombre_prod, precio):
             if not telefono: return
             tel = telefono.strip().replace(" ", "").replace("-", "")
@@ -92,6 +91,60 @@ def main(page: ft.Page):
             msg = f"Hola! Compra en Beauty POS.\nProducto: {nombre_prod}\nTotal: ${precio:,.2f}"
             page.launch_url(f"https://wa.me/{tel}?text={urllib.parse.quote(msg)}")
 
+        # --- B. DIALOGOS DE EDICIÓN DE STOCK ---
+        txt_nuevo_stock = ft.TextField(label="Nueva Cantidad", keyboard_type="number", autofocus=True)
+        
+        def guardar_edicion_stock(e):
+            global id_stock_editar
+            try:
+                nueva_cantidad = int(txt_nuevo_stock.value)
+                conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
+                c.execute("UPDATE inventario SET stock_actual = %s WHERE variante_id = %s", (nueva_cantidad, id_stock_editar))
+                conn.commit(); conn.close()
+                page.snack_bar = ft.SnackBar(ft.Text("Stock Actualizado"), bgcolor="green"); page.snack_bar.open=True
+                dialogo_editar.open = False
+                cargar_inv() # Refrescar lista
+            except Exception as ex:
+                page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True
+            page.update()
+
+        def cerrar_dialogo(e):
+            dialogo_editar.open = False
+            page.update()
+
+        dialogo_editar = ft.AlertDialog(
+            title=ft.Text("Modificar Stock"),
+            content=txt_nuevo_stock,
+            actions=[
+                ft.TextButton("Cancelar", on_click=cerrar_dialogo),
+                ft.ElevatedButton("Guardar", on_click=guardar_edicion_stock, bgcolor="blue", color="white")
+            ]
+        )
+
+        def abrir_editar(id_var, stock_actual):
+            global id_stock_editar
+            id_stock_editar = id_var
+            txt_nuevo_stock.value = str(stock_actual)
+            page.dialog = dialogo_editar
+            dialogo_editar.open = True
+            page.update()
+
+        def eliminar_producto_inv(id_var):
+            try:
+                conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
+                # Intentamos borrar. Si falla por FK, saltará al except
+                c.execute("DELETE FROM inventario WHERE variante_id = %s", (id_var,))
+                c.execute("DELETE FROM variantes WHERE id = %s", (id_var,))
+                conn.commit(); conn.close()
+                page.snack_bar = ft.SnackBar(ft.Text("Producto Eliminado"), bgcolor="blue"); page.snack_bar.open=True
+                cargar_inv()
+            except psycopg2.errors.ForeignKeyViolation:
+                page.snack_bar = ft.SnackBar(ft.Text("❌ No se puede borrar: Tiene ventas históricas"), bgcolor="red"); page.snack_bar.open=True
+            except Exception as ex:
+                page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True
+            page.update()
+
+        # --- C. VENTA ---
         def finalizar_venta(e):
             global id_variante_seleccionada, precio_venta_seleccionado
             tel = txt_tel.value.strip()
@@ -146,175 +199,3 @@ def main(page: ft.Page):
             col_reporte.controls.clear()
             try:
                 conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                # CONSULTA CORREGIDA (ventas.precio_venta)
-                c.execute("SELECT TO_CHAR(ventas.fecha, 'HH24:MI'), ventas.precio_venta, ventas.cliente_telefono, p.nombre FROM ventas JOIN variantes v ON ventas.variante_id = v.id JOIN productos p ON v.producto_id = p.id WHERE DATE(ventas.fecha)=CURRENT_DATE ORDER BY ventas.fecha DESC")
-                total = 0
-                for r in c.fetchall():
-                    total += float(r[1])
-                    col_reporte.controls.append(ft.Container(padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1,"#dddddd")), content=ft.Column([
-                        ft.Row([ft.Text(f"{r[3]}", weight="bold"), ft.Text(f"${r[1]}", weight="bold", color="green")], alignment="spaceBetween"),
-                        ft.Row([ft.Text(f"Hora: {r[0]}", size=12), ft.Text(f"Tel: {r[2] if r[2] else '-'}", size=12)], alignment="spaceBetween")
-                    ])))
-                col_reporte.controls.insert(0, ft.Container(bgcolor="#e8f5e9", padding=15, border_radius=10, content=ft.Row([ft.Text("Total Hoy:", size=18), ft.Text(f"${total:,.2f}", size=22, weight="bold", color="green")], alignment="spaceBetween")))
-                conn.close()
-            except Exception as e: col_reporte.controls.append(ft.Text(f"Error carga: {e}", color="red"))
-            page.update()
-        
-        vista_reportes = ft.ListView(expand=True, padding=20, spacing=10, controls=[
-            ft.Text("Corte de Caja", size=25, weight="bold"),
-            ft.ElevatedButton("Actualizar", icon="refresh", on_click=lambda e: cargar_reporte()),
-            col_reporte
-        ])
-
-        # VISTA AGREGAR
-        txt_new_sku = ft.TextField(label="SKU")
-        txt_new_tono = ft.TextField(label="Tono")
-        txt_new_precio = ft.TextField(label="Precio", keyboard_type="number")
-        txt_new_stock = ft.TextField(label="Stock", keyboard_type="number")
-        def guardar_nuevo(e):
-            page.snack_bar = ft.SnackBar(ft.Text("Función disponible en PC"), bgcolor="orange"); page.snack_bar.open=True; page.update()
-
-        vista_agregar = ft.ListView(expand=True, padding=20, spacing=15, controls=[
-            ft.Text("Nuevo Producto", size=25, weight="bold"),
-            txt_new_sku, txt_new_tono, txt_new_precio, txt_new_stock,
-            ft.ElevatedButton("GUARDAR (Solo PC)", on_click=guardar_nuevo, height=50)
-        ])
-
-        # VISTA INVENTARIO
-        col_inv = ft.Column()
-        def cargar_inv():
-            col_inv.controls.clear()
-            try:
-                conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                c.execute("SELECT p.nombre, v.numero_tono, i.stock_actual FROM variantes v JOIN productos p ON v.producto_id=p.id JOIN inventario i ON v.id=i.variante_id ORDER BY p.nombre")
-                for r in c.fetchall():
-                    col_inv.controls.append(ft.Container(padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, "#eeeeee")), content=ft.Row([ft.Text(f"{r[0]} {r[1]}"), ft.Text(f"{r[2]} pzas", color="blue" if r[2]>5 else "red")], alignment="spaceBetween")))
-                conn.close()
-            except: pass
-            page.update()
-        
-        vista_inv = ft.ListView(expand=True, padding=20, spacing=10, controls=[
-            ft.Text("Inventario", size=25, weight="bold"),
-            ft.ElevatedButton("Refrescar", on_click=lambda e: cargar_inv()), 
-            col_inv
-        ])
-
-        # --- VISTA USUARIOS (RESTAURADA COMPLETA) ---
-        col_users = ft.Column()
-        # Campos para crear nuevo usuario
-        txt_u_new = ft.TextField(label="Nuevo Usuario")
-        txt_p_new = ft.TextField(label="Contraseña", password=True)
-        dd_rol = ft.Dropdown(label="Rol", options=[
-            ft.dropdown.Option("vendedor"), 
-            ft.dropdown.Option("gerente"), 
-            ft.dropdown.Option("admin")
-        ], value="vendedor")
-
-        def cargar_users():
-            col_users.controls.clear()
-            try:
-                conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                c.execute("SELECT id, username, rol FROM usuarios ORDER BY username")
-                for r in c.fetchall():
-                    uid, uname, urol = r
-                    # Fila con nombre y botón de eliminar
-                    col_users.controls.append(
-                        ft.Container(
-                            padding=10, 
-                            border=ft.border.only(bottom=ft.border.BorderSide(1, "#eeeeee")), 
-                            content=ft.Row([
-                                ft.Text(f"👤 {uname} ({urol})", size=16),
-                                ft.IconButton(icon="delete", icon_color="red", on_click=lambda e, x=uid: eliminar_user(x))
-                            ], alignment="spaceBetween")
-                        )
-                    )
-                conn.close()
-            except: pass
-            page.update()
-
-        def eliminar_user(id_borrar):
-            if id_borrar == usuario_actual_id:
-                page.snack_bar = ft.SnackBar(ft.Text("No te puedes borrar a ti mismo"), bgcolor="orange"); page.snack_bar.open=True; page.update(); return
-            try:
-                conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                c.execute("DELETE FROM usuarios WHERE id=%s", (id_borrar,))
-                conn.commit(); conn.close()
-                page.snack_bar = ft.SnackBar(ft.Text("Usuario eliminado"), bgcolor="blue"); page.snack_bar.open=True
-                cargar_users()
-            except Exception as e: page.snack_bar = ft.SnackBar(ft.Text(f"Error: {e}"), bgcolor="red"); page.snack_bar.open=True; page.update()
-
-        def crear_user(e):
-            u, p, r = txt_u_new.value, txt_p_new.value, dd_rol.value
-            if not u or not p: return
-            try:
-                h = bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
-                conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                c.execute("INSERT INTO usuarios (username, password_hash, rol) VALUES (%s, %s, %s)", (u, h, r))
-                conn.commit(); conn.close()
-                page.snack_bar = ft.SnackBar(ft.Text("Usuario Creado"), bgcolor="green"); page.snack_bar.open=True
-                txt_u_new.value=""; txt_p_new.value=""; cargar_users()
-            except Exception as ex: page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True; page.update()
-
-        # Armado de la vista Users verticalmente
-        vista_users = ft.ListView(expand=True, padding=20, spacing=15, controls=[
-            ft.Text("Gestión Usuarios", size=25, weight="bold"),
-            ft.Text("Crear Nuevo:", weight="bold"),
-            txt_u_new,
-            txt_p_new,
-            dd_rol,
-            ft.ElevatedButton("CREAR USUARIO", on_click=crear_user, height=50),
-            ft.Divider(),
-            ft.Row([
-                ft.Text("Lista Actual", weight="bold", size=18),
-                ft.IconButton(icon="refresh", on_click=lambda e: cargar_users())
-            ], alignment="spaceBetween"),
-            col_users
-        ])
-
-        # --- NAVEGACIÓN ---
-        cuerpo_principal = ft.Container(content=vista_ventas, expand=True)
-
-        def cambiar_tab(e):
-            idx = e.control.selected_index
-            if idx == 0: cuerpo_principal.content = vista_ventas
-            label_sel = destinos[idx].label
-            if label_sel == "Corte": cuerpo_principal.content = vista_reportes; cargar_reporte()
-            elif label_sel == "Stock": cuerpo_principal.content = vista_inv; cargar_inv()
-            elif label_sel == "Alta": cuerpo_principal.content = vista_agregar
-            elif label_sel == "Users": cuerpo_principal.content = vista_users; cargar_users()
-            page.update()
-
-        destinos = [ft.NavigationDestination(icon="money", label="Vender")]
-        
-        rol_seguro = usuario_actual_rol.lower().strip()
-        
-        if rol_seguro in ["admin", "gerente", "gerente de tienda", "administrador"]:
-            destinos.append(ft.NavigationDestination(icon="assessment", label="Corte"))
-            destinos.append(ft.NavigationDestination(icon="list", label="Stock"))
-            destinos.append(ft.NavigationDestination(icon="add_box", label="Alta"))
-
-        if "admin" in rol_seguro:
-            destinos.append(ft.NavigationDestination(icon="people", label="Users"))
-
-        nav_bar = ft.NavigationBar(destinations=destinos, on_change=cambiar_tab, bgcolor="white", selected_index=0)
-
-        def cerrar_sesion(e):
-            global usuario_actual_id; usuario_actual_id = None; page.clean(); page.add(vista_login)
-
-        page.add(
-            ft.Column(
-                expand=True, spacing=0,
-                controls=[
-                    ft.Container(padding=10, bgcolor="purple", content=ft.Row([
-                        ft.Text(f"Hola, {usuario_actual_nombre}", weight="bold", color="white"),
-                        ft.IconButton(icon="logout", icon_color="white", on_click=cerrar_sesion)
-                    ], alignment="spaceBetween")),
-                    cuerpo_principal,
-                    nav_bar
-                ]
-            )
-        )
-
-    page.add(vista_login)
-
-ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(os.environ.get("PORT", 8080)), host="0.0.0.0")
