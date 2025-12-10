@@ -27,30 +27,21 @@ usuario_actual_id = None; usuario_actual_nombre = ""; usuario_actual_rol = ""
 id_variante_seleccionada = None; precio_venta_seleccionado = 0.0; nombre_producto_seleccionado = "" 
 
 def main(page: ft.Page):
-    page.title = "Beauty POS App"
+    page.title = "Beauty POS vFinal"
     page.scroll = None 
     page.theme_mode = ft.ThemeMode.LIGHT
     page.bgcolor = "#ffffff"
     page.padding = 0
     page.spacing = 0
 
-    # ==========================================
-    # 0. INICIALIZACIÓN SEGURA DE DB
-    # ==========================================
+    # 0. INICIALIZAR DB (Crear tablas si no existen)
     def inicializar_db():
-        # Crea la tabla marcas si no existe para evitar errores
         try:
             conn = psycopg2.connect(URL_CONEXION); c = conn.cursor()
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS marcas (
-                    id SERIAL PRIMARY KEY,
-                    nombre VARCHAR(100) UNIQUE NOT NULL
-                );
-            """)
+            c.execute("CREATE TABLE IF NOT EXISTS marcas (id SERIAL PRIMARY KEY, nombre VARCHAR(100) UNIQUE NOT NULL);")
             conn.commit(); conn.close()
         except: pass
-
-    inicializar_db() # Ejecutamos al inicio
+    inicializar_db()
 
     # ==========================================
     # 1. LOGIN
@@ -64,18 +55,14 @@ def main(page: ft.Page):
         page.update()
 
         try:
-            conn = psycopg2.connect(URL_CONEXION)
-            cursor = conn.cursor()
+            conn = psycopg2.connect(URL_CONEXION); cursor = conn.cursor()
             cursor.execute("SELECT id, password_hash, rol FROM usuarios WHERE username = %s", (user,))
-            res = cursor.fetchone()
-            conn.close()
+            res = cursor.fetchone(); conn.close()
 
             if res and bcrypt.checkpw(pwd.encode(), res[1].encode()):
-                usuario_actual_id = res[0]
-                usuario_actual_nombre = user
+                usuario_actual_id = res[0]; usuario_actual_nombre = user; 
                 usuario_actual_rol = str(res[2]).strip().lower()
-                page.clean()
-                construir_interfaz()
+                page.clean(); construir_interfaz()
             else:
                 lbl_error_login.value = "❌ Datos incorrectos"; btn_login.text = "ENTRAR"; btn_login.disabled = False
         except Exception as err:
@@ -84,14 +71,14 @@ def main(page: ft.Page):
 
     txt_user_login = ft.TextField(label="Usuario", width=300)
     txt_pass_login = ft.TextField(label="Contraseña", password=True, width=300)
-    btn_login = ft.ElevatedButton("ENTRAR", on_click=verificar_login, bgcolor="purple", color="white", width=300, height=50)
+    btn_login = ft.ElevatedButton("ENTRAR", on_click=verificar_login, bgcolor="blue", color="white", width=300, height=50) # CAMBIADO A AZUL
     lbl_error_login = ft.Text("", color="red")
 
     vista_login = ft.Container(
         alignment=ft.alignment.center, padding=20,
         content=ft.Column([
             ft.Container(height=50),
-            ft.Icon(name="spa", size=80, color="purple"),
+            ft.Icon(name="spa", size=80, color="blue"), # CAMBIADO A AZUL
             ft.Text("Beauty POS", size=30, weight="bold"), 
             ft.Container(height=30),
             txt_user_login, txt_pass_login, 
@@ -105,7 +92,7 @@ def main(page: ft.Page):
     # ==========================================
     def construir_interfaz():
         
-        # --- FUNCIONES AUXILIARES ---
+        # --- A. FUNCIONES AUXILIARES ---
         def enviar_whatsapp(telefono, nombre_prod, precio):
             if not telefono: return
             tel = telefono.strip().replace(" ", "").replace("-", "")
@@ -113,7 +100,7 @@ def main(page: ft.Page):
             msg = f"Hola! Compra en Beauty POS.\nProducto: {nombre_prod}\nTotal: ${precio:,.2f}"
             page.launch_url(f"https://wa.me/{tel}?text={urllib.parse.quote(msg)}")
 
-        # --- A. VENTAS ---
+        # --- B. LÓGICA VENTA ---
         def finalizar_venta(e):
             global id_variante_seleccionada, precio_venta_seleccionado
             tel = txt_tel.value.strip()
@@ -151,16 +138,19 @@ def main(page: ft.Page):
             except: pass
             page.update()
 
+        # VISTA VENDER
+        txt_busqueda = ft.TextField(label="Buscar Tono", on_submit=buscar_prod)
+        info_prod = ft.Text("", size=18, weight="bold")
+        txt_tel = ft.TextField(label="WhatsApp Cliente", keyboard_type=ft.KeyboardType.PHONE, visible=False)
+        btn_cobrar = ft.ElevatedButton("COBRAR", bgcolor="green", color="white", visible=False, on_click=finalizar_venta, height=50)
+        
         vista_ventas = ft.ListView(expand=True, padding=20, spacing=15, controls=[
             ft.Text("Punto de Venta", size=25, weight="bold"),
-            ft.Row([txt_busqueda := ft.TextField(label="Buscar Tono", on_submit=buscar_prod, expand=True), ft.IconButton(icon="search", on_click=buscar_prod, icon_color="purple")]),
-            ft.Divider(), 
-            info_prod := ft.Text("", size=18, weight="bold"), 
-            txt_tel := ft.TextField(label="WhatsApp Cliente", keyboard_type=ft.KeyboardType.PHONE, visible=False),
-            btn_cobrar := ft.ElevatedButton("COBRAR", bgcolor="green", color="white", visible=False, on_click=finalizar_venta, height=50)
+            ft.Row([txt_busqueda, ft.IconButton(icon="search", on_click=buscar_prod, icon_color="blue")]), # Icono azul
+            ft.Divider(), info_prod, txt_tel, btn_cobrar
         ])
 
-        # --- B. REPORTE ---
+        # --- C. REPORTE ---
         col_reporte = ft.Column()
         def cargar_reporte(modo="diario"):
             col_reporte.controls.clear()
@@ -172,7 +162,6 @@ def main(page: ft.Page):
                 else:
                     query = "SELECT TO_CHAR(ventas.fecha, 'DD/MM HH24:MI'), ventas.precio_venta, ventas.cliente_telefono, p.nombre FROM ventas JOIN variantes v ON ventas.variante_id = v.id JOIN productos p ON v.producto_id = p.id WHERE ventas.fecha >= CURRENT_DATE - INTERVAL '7 days' ORDER BY ventas.fecha DESC"
                     titulo = "Total 7 Días:"
-                
                 c.execute(query)
                 total = 0
                 for r in c.fetchall():
@@ -181,46 +170,46 @@ def main(page: ft.Page):
                         ft.Row([ft.Text(f"{r[3]}", weight="bold"), ft.Text(f"${r[1]}", weight="bold", color="green")], alignment="spaceBetween"),
                         ft.Row([ft.Text(f"Fecha: {r[0]}", size=12), ft.Text(f"Tel: {r[2] if r[2] else '-'}", size=12)], alignment="spaceBetween")
                     ])))
-                col_reporte.controls.insert(0, ft.Container(bgcolor="#e8f5e9", padding=15, border_radius=10, content=ft.Row([ft.Text(titulo, size=18), ft.Text(f"${total:,.2f}", size=22, weight="bold", color="green")], alignment="spaceBetween")))
+                col_reporte.controls.insert(0, ft.Container(bgcolor="#e3f2fd", padding=15, border_radius=10, content=ft.Row([ft.Text(titulo, size=18), ft.Text(f"${total:,.2f}", size=22, weight="bold", color="blue")], alignment="spaceBetween")))
                 conn.close()
             except Exception as e: col_reporte.controls.append(ft.Text(f"Error carga: {e}", color="red"))
             page.update()
         
         vista_reportes = ft.ListView(expand=True, padding=20, spacing=10, controls=[
-            ft.Text("Reportes", size=25, weight="bold"),
+            ft.Text("Corte de Caja", size=25, weight="bold"),
             ft.Row([ft.ElevatedButton("HOY", on_click=lambda e: cargar_reporte("diario"), expand=True), ft.ElevatedButton("SEMANA", on_click=lambda e: cargar_reporte("semanal"), expand=True)]),
             ft.Divider(), col_reporte
         ])
 
-        # --- C. INVENTARIO (LAPIZ ARREGLADO) ---
+        # --- D. INVENTARIO (FIXED) ---
         col_inv = ft.Column()
         
-        # Función para abrir dialogo de edición DINÁMICAMENTE
+        # 1. Función para abrir MODAL DE EDICIÓN STOCK (Usando page.open)
         def click_lapiz_stock(e):
-            datos = e.control.data # {id: 5, stock: 10}
+            datos = e.control.data # {id: 1, stock: 5}
             
-            # Controles locales para este dialogo
-            txt_stk_edit = ft.TextField(value=str(datos['stock']), label="Nuevo Stock", keyboard_type="number", autofocus=True)
+            txt_nuevo = ft.TextField(value=str(datos['stock']), label="Nuevo Stock", keyboard_type="number", autofocus=True)
             
-            def guardar_cambio_stk(e):
+            def guardar_cambio(e):
                 try:
                     conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                    c.execute("UPDATE inventario SET stock_actual = %s WHERE variante_id = %s", (int(txt_stk_edit.value), datos['id']))
+                    c.execute("UPDATE inventario SET stock_actual = %s WHERE variante_id = %s", (int(txt_nuevo.value), datos['id']))
                     conn.commit(); conn.close()
-                    page.dialog.open = False
+                    page.close(dlg_edit) # Cierre moderno
+                    page.snack_bar = ft.SnackBar(ft.Text("✅ Stock actualizado"), bgcolor="green"); page.snack_bar.open=True
                     page.update()
-                    page.snack_bar = ft.SnackBar(ft.Text("Stock Actualizado"), bgcolor="green"); page.snack_bar.open=True
                     cargar_inv()
                 except Exception as ex: page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True; page.update()
 
-            dlg = ft.AlertDialog(
+            dlg_edit = ft.AlertDialog(
                 title=ft.Text("Editar Stock"),
-                content=txt_stk_edit,
-                actions=[ft.TextButton("Cancelar", on_click=lambda e: setattr(page.dialog, 'open', False) or page.update()), ft.ElevatedButton("GUARDAR", on_click=guardar_cambio_stk)]
+                content=txt_nuevo,
+                actions=[
+                    ft.TextButton("Cancelar", on_click=lambda e: page.close(dlg_edit)),
+                    ft.ElevatedButton("GUARDAR", on_click=guardar_cambio)
+                ]
             )
-            page.dialog = dlg
-            dlg.open = True
-            page.update()
+            page.open(dlg_edit) # FORZAMOS APERTURA
 
         def borrar_item(e):
             id_var = e.control.data
@@ -229,7 +218,7 @@ def main(page: ft.Page):
                 c.execute("DELETE FROM inventario WHERE variante_id=%s", (id_var,))
                 c.execute("DELETE FROM variantes WHERE id=%s", (id_var,))
                 conn.commit(); conn.close()
-                page.snack_bar = ft.SnackBar(ft.Text("Producto Eliminado"), bgcolor="blue"); page.snack_bar.open=True
+                page.snack_bar = ft.SnackBar(ft.Text("Eliminado"), bgcolor="blue"); page.snack_bar.open=True
                 cargar_inv()
             except: page.snack_bar = ft.SnackBar(ft.Text("Error al borrar"), bgcolor="red"); page.snack_bar.open=True; page.update()
 
@@ -240,12 +229,11 @@ def main(page: ft.Page):
                 c.execute("SELECT v.id, p.nombre, v.numero_tono, i.stock_actual FROM variantes v JOIN productos p ON v.producto_id=p.id JOIN inventario i ON v.id=i.variante_id ORDER BY p.nombre, v.numero_tono")
                 for r in c.fetchall():
                     vid, nom, ton, stk = r
+                    btn_edit = ft.IconButton(icon="edit", icon_color="blue", data={'id': vid, 'stock': stk}, on_click=click_lapiz_stock)
+                    btn_del = ft.IconButton(icon="delete", icon_color="red", data=vid, on_click=borrar_item)
                     col_inv.controls.append(ft.Container(padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, "#eeeeee")), content=ft.Row([
                         ft.Column([ft.Text(f"{nom} - {ton}", weight="bold"), ft.Text(f"Stock: {stk}", color="blue" if stk>5 else "red")]),
-                        ft.Row([
-                            ft.IconButton(icon="edit", icon_color="blue", data={'id': vid, 'stock': stk}, on_click=click_lapiz_stock),
-                            ft.IconButton(icon="delete", icon_color="red", data=vid, on_click=borrar_item)
-                        ])
+                        ft.Row([btn_edit, btn_del])
                     ], alignment="spaceBetween")))
                 conn.close()
             except: pass
@@ -257,62 +245,70 @@ def main(page: ft.Page):
             col_inv
         ])
 
-        # --- D. AGREGAR (CON CREAR MARCA Y DB) ---
-        dd_marcas = ft.Dropdown(label="Marca", expand=True)
-        txt_sku = ft.TextField(label="SKU")
-        txt_tono = ft.TextField(label="Tono")
-        txt_precio = ft.TextField(label="Precio", keyboard_type="number")
-        txt_stock = ft.TextField(label="Stock", keyboard_type="number")
+        # --- E. AGREGAR (FIXED: MARCAS) ---
+        dd_marcas = ft.Dropdown(label="Marca Seleccionada", expand=True, options=[])
+        txt_new_sku = ft.TextField(label="SKU")
+        txt_new_tono = ft.TextField(label="Tono (ej. 7.1)")
+        txt_new_precio = ft.TextField(label="Precio Venta", keyboard_type="number")
+        txt_new_stock = ft.TextField(label="Stock Inicial", keyboard_type="number")
         
+        # 1. MODAL NUEVA MARCA (FIXED)
         def click_nueva_marca(e):
-            txt_m_nom = ft.TextField(label="Nombre Marca", autofocus=True)
+            txt_m = ft.TextField(label="Nombre Marca", autofocus=True)
+            
             def guardar_m(e):
-                if not txt_m_nom.value: return
+                if not txt_m.value: return
                 try:
                     conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                    c.execute("INSERT INTO marcas (nombre) VALUES (%s)", (txt_m_nom.value,))
+                    c.execute("INSERT INTO marcas (nombre) VALUES (%s)", (txt_m.value,))
                     conn.commit(); conn.close()
-                    page.dialog.open = False
-                    page.update()
+                    page.close(dlg_m) # Cierre moderno
                     page.snack_bar = ft.SnackBar(ft.Text("Marca Creada"), bgcolor="green"); page.snack_bar.open=True
-                    cargar_marcas_dropdown()
+                    page.update()
+                    cargar_marcas_dropdown() # Recargar dropdown inmediatamente
                 except Exception as ex: page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True; page.update()
 
-            dlg = ft.AlertDialog(title=ft.Text("Nueva Marca"), content=txt_m_nom, actions=[ft.ElevatedButton("CREAR", on_click=guardar_m)])
-            page.dialog = dlg; dlg.open=True; page.update()
+            dlg_m = ft.AlertDialog(title=ft.Text("Nueva Marca"), content=txt_m, actions=[ft.ElevatedButton("CREAR", on_click=guardar_m)])
+            page.open(dlg_m) # FORZAR APERTURA
 
         def cargar_marcas_dropdown():
             try:
                 conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
                 c.execute("SELECT id, nombre FROM marcas ORDER BY nombre")
                 dd_marcas.options = [ft.dropdown.Option(key=str(x[0]), text=x[1]) for x in c.fetchall()]
-                conn.close(); page.update()
+                conn.close()
+                page.update()
             except: pass
 
         def guardar_prod(e):
-            if not dd_marcas.value or not txt_sku.value: 
+            if not dd_marcas.value or not txt_new_sku.value: 
                 page.snack_bar = ft.SnackBar(ft.Text("Falta Marca o SKU"), bgcolor="orange"); page.snack_bar.open=True; page.update(); return
             try:
                 conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
                 c.execute("INSERT INTO variantes (producto_id, sku, nombre_variante, numero_tono, precio_compra, precio_venta) VALUES (%s, %s, %s, %s, 0, %s) RETURNING id", 
-                            (dd_marcas.value, txt_sku.value, f"Tono {txt_tono.value}", txt_tono.value, float(txt_precio.value)))
+                            (dd_marcas.value, txt_new_sku.value, f"Tono {txt_new_tono.value}", txt_new_tono.value, float(txt_new_precio.value)))
                 nid = c.fetchone()[0]
-                c.execute("INSERT INTO inventario (variante_id, stock_actual) VALUES (%s, %s)", (nid, int(txt_stock.value)))
+                c.execute("INSERT INTO inventario (variante_id, stock_actual) VALUES (%s, %s)", (nid, int(txt_new_stock.value)))
                 conn.commit(); conn.close()
-                page.snack_bar = ft.SnackBar(ft.Text("Producto Guardado"), bgcolor="green"); page.snack_bar.open=True
-                txt_sku.value=""; txt_tono.value=""; txt_precio.value=""; txt_stock.value=""
-                page.update()
-            except Exception as ex: page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True; page.update()
+                page.snack_bar = ft.SnackBar(ft.Text("✅ Producto Agregado"), bgcolor="green"); page.snack_bar.open=True
+                txt_new_sku.value=""; txt_new_tono.value=""; txt_new_precio.value=""; txt_new_stock.value=""
+                if usuario_actual_rol in ["gerente", "admin"]: cargar_inv() 
+            except Exception as ex: page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True
+            page.update()
 
         vista_agregar = ft.ListView(expand=True, padding=20, spacing=15, controls=[
-            ft.Text("Alta Producto", size=25, weight="bold"),
-            ft.Row([dd_marcas, ft.IconButton(icon="add", icon_color="green", on_click=click_nueva_marca)]),
-            ft.ElevatedButton("Cargar Marcas", icon="refresh", on_click=lambda e: cargar_marcas_dropdown()),
-            txt_sku, txt_tono, txt_precio, txt_stock,
-            ft.ElevatedButton("GUARDAR", on_click=guardar_prod, height=50, bgcolor="blue", color="white")
+            ft.Text("Nuevo Producto", size=25, weight="bold"),
+            # FILA IMPORTANTE: Dropdown y Botón +
+            ft.Row([
+                dd_marcas, 
+                ft.IconButton(icon="add_circle", icon_color="blue", icon_size=40, on_click=click_nueva_marca)
+            ]),
+            ft.ElevatedButton("Refrescar Marcas", icon="refresh", on_click=lambda e: cargar_marcas_dropdown()),
+            txt_new_sku, txt_new_tono, txt_new_precio, txt_new_stock,
+            ft.ElevatedButton("GUARDAR PRODUCTO", on_click=guardar_prod, height=50, bgcolor="blue", color="white")
         ])
 
-        # --- E. USUARIOS ---
+        # --- F. VISTA USUARIOS ---
         col_users = ft.Column()
         txt_u_new = ft.TextField(label="Nuevo Usuario")
         txt_p_new = ft.TextField(label="Contraseña", password=True)
@@ -373,7 +369,7 @@ def main(page: ft.Page):
             idx = e.control.selected_index
             if idx == 0: cuerpo_principal.content = vista_ventas
             label_sel = destinos[idx].label
-            if label_sel == "Corte": cuerpo_principal.content = vista_reportes; cargar_reporte()
+            if label_sel == "Corte": cuerpo_principal.content = vista_reportes; cargar_reporte("diario")
             elif label_sel == "Stock": cuerpo_principal.content = vista_inv; cargar_inv()
             elif label_sel == "Alta": cuerpo_principal.content = vista_agregar; cargar_marcas_dropdown()
             elif label_sel == "Users": cuerpo_principal.content = vista_users; cargar_users()
@@ -395,7 +391,7 @@ def main(page: ft.Page):
 
         page.add(
             ft.Column(expand=True, spacing=0, controls=[
-                ft.Container(padding=10, bgcolor="purple", content=ft.Row([
+                ft.Container(padding=10, bgcolor="blue", content=ft.Row([ # Barra AZUL
                     ft.Text(f"Hola, {usuario_actual_nombre}", weight="bold", color="white"),
                     ft.IconButton(icon="logout", icon_color="white", on_click=cerrar_sesion)
                 ], alignment="spaceBetween")),
