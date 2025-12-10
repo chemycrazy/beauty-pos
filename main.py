@@ -16,7 +16,7 @@ logger = logging.getLogger("BeautyPOS")
 # ⚠️ PON TU CONTRASEÑA AQUÍ
 URL_CONEXION = "postgresql://postgres.swavrpqagshyddhjaipf:R57667115#g@aws-0-us-west-2.pooler.supabase.com:6543/postgres"
 
-# --- PARCHE DE COMPATIBILIDAD FLET ---
+# --- PARCHE DE COMPATIBILIDAD ---
 try:
     NavDest = ft.NavigationDestination
 except AttributeError:
@@ -34,8 +34,20 @@ def main(page: ft.Page):
     page.padding = 0
     page.spacing = 0
 
+    # 0. INICIALIZAR DB Y ACTUALIZAR TABLA USUARIOS
+    def inicializar_db():
+        try:
+            conn = psycopg2.connect(URL_CONEXION); c = conn.cursor()
+            # 1. Tabla Marcas
+            c.execute("CREATE TABLE IF NOT EXISTS marcas (id SERIAL PRIMARY KEY, nombre VARCHAR(100) UNIQUE NOT NULL);")
+            # 2. Actualización Tabla Usuarios (Agregamos columna activo si no existe)
+            c.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS activo BOOLEAN DEFAULT TRUE;")
+            conn.commit(); conn.close()
+        except: pass
+    inicializar_db()
+
     # ==========================================
-    # 1. LOGIN
+    # 1. LOGIN (AHORA VERIFICA SI ESTÁ ACTIVO)
     # ==========================================
     def verificar_login(e):
         global usuario_actual_id, usuario_actual_nombre, usuario_actual_rol
@@ -46,20 +58,17 @@ def main(page: ft.Page):
         page.update()
 
         try:
-            conn = psycopg2.connect(URL_CONEXION)
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, password_hash, rol FROM usuarios WHERE username = %s", (user,))
-            res = cursor.fetchone()
-            conn.close()
+            conn = psycopg2.connect(URL_CONEXION); cursor = conn.cursor()
+            # MODIFICACIÓN CLAVE: AND activo = TRUE
+            cursor.execute("SELECT id, password_hash, rol FROM usuarios WHERE username = %s AND activo = TRUE", (user,))
+            res = cursor.fetchone(); conn.close()
 
             if res and bcrypt.checkpw(pwd.encode(), res[1].encode()):
-                usuario_actual_id = res[0]
-                usuario_actual_nombre = user
+                usuario_actual_id = res[0]; usuario_actual_nombre = user; 
                 usuario_actual_rol = str(res[2]).strip().lower()
-                page.clean()
-                construir_interfaz()
+                page.clean(); construir_interfaz()
             else:
-                lbl_error_login.value = "❌ Datos incorrectos"; btn_login.text = "ENTRAR"; btn_login.disabled = False
+                lbl_error_login.value = "❌ Datos incorrectos o Usuario Inactivo"; btn_login.text = "ENTRAR"; btn_login.disabled = False
         except Exception as err:
             lbl_error_login.value = f"Error: {err}"; btn_login.text = "ENTRAR"; btn_login.disabled = False
         page.update()
@@ -175,15 +184,11 @@ def main(page: ft.Page):
             ft.Divider(), col_reporte
         ])
 
-        # --- C. INVENTARIO (LAPIZ DINÁMICO) ---
+        # --- C. INVENTARIO ---
         col_inv = ft.Column()
         
-        # 1. FUNCIÓN DINÁMICA PARA EDITAR STOCK
         def click_lapiz_stock(e):
-            # Recuperamos los datos pegados al botón
-            datos = e.control.data # {id: 5, stock: 10}
-            
-            # Campo de texto local (se crea nuevo cada vez)
+            datos = e.control.data 
             txt_nuevo = ft.TextField(value=str(datos['stock']), label="Nuevo Stock", keyboard_type="number", autofocus=True)
             
             def guardar_cambio(e):
@@ -191,22 +196,13 @@ def main(page: ft.Page):
                     conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
                     c.execute("UPDATE inventario SET stock_actual = %s WHERE variante_id = %s", (int(txt_nuevo.value), datos['id']))
                     conn.commit(); conn.close()
-                    page.close(dlg_edit) # Cierre
+                    page.close(dlg_edit)
                     page.snack_bar = ft.SnackBar(ft.Text("✅ Stock actualizado"), bgcolor="green"); page.snack_bar.open=True
                     page.update()
                     cargar_inv()
-                except Exception as ex:
-                    page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True; page.update()
+                except Exception as ex: page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True; page.update()
 
-            dlg_edit = ft.AlertDialog(
-                title=ft.Text("Editar Stock"),
-                content=txt_nuevo,
-                actions=[
-                    ft.TextButton("Cancelar", on_click=lambda e: page.close(dlg_edit)),
-                    ft.ElevatedButton("GUARDAR", on_click=guardar_cambio)
-                ]
-            )
-            # Abrimos el dialogo nuevo
+            dlg_edit = ft.AlertDialog(title=ft.Text("Editar Stock"), content=txt_nuevo, actions=[ft.TextButton("Cancelar", on_click=lambda e: page.close(dlg_edit)), ft.ElevatedButton("GUARDAR", on_click=guardar_cambio)])
             page.open(dlg_edit)
 
         def borrar_item(e):
@@ -218,7 +214,7 @@ def main(page: ft.Page):
                 conn.commit(); conn.close()
                 page.snack_bar = ft.SnackBar(ft.Text("Eliminado"), bgcolor="blue"); page.snack_bar.open=True
                 cargar_inv()
-            except: page.snack_bar = ft.SnackBar(ft.Text("Error al borrar"), bgcolor="red"); page.snack_bar.open=True; page.update()
+            except: page.snack_bar = ft.SnackBar(ft.Text("No se puede borrar (tiene ventas)"), bgcolor="red"); page.snack_bar.open=True; page.update()
 
         def cargar_inv():
             col_inv.controls.clear()
@@ -227,7 +223,6 @@ def main(page: ft.Page):
                 c.execute("SELECT v.id, p.nombre, v.numero_tono, i.stock_actual FROM variantes v JOIN productos p ON v.producto_id=p.id JOIN inventario i ON v.id=i.variante_id ORDER BY p.nombre, v.numero_tono")
                 for r in c.fetchall():
                     vid, nom, ton, stk = r
-                    # DATA PEGADA AL BOTÓN (CLAVE PARA QUE FUNCIONE)
                     btn_edit = ft.IconButton(icon="edit", icon_color="blue", data={'id': vid, 'stock': stk}, on_click=click_lapiz_stock)
                     btn_del = ft.IconButton(icon="delete", icon_color="red", data=vid, on_click=borrar_item)
                     col_inv.controls.append(ft.Container(padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, "#eeeeee")), content=ft.Row([
@@ -244,42 +239,34 @@ def main(page: ft.Page):
             col_inv
         ])
 
-        # --- D. AGREGAR (CORREGIDO PARA USAR TABLA 'PRODUCTOS') ---
-        dd_marcas = ft.Dropdown(label="Selecciona Línea/Marca", expand=True)
+        # --- D. AGREGAR ---
+        dd_marcas = ft.Dropdown(label="Selecciona Línea", expand=True)
         txt_new_sku = ft.TextField(label="SKU")
         txt_new_tono = ft.TextField(label="Tono (ej. 7.1)")
         txt_new_precio = ft.TextField(label="Precio Venta", keyboard_type="number")
         txt_new_stock = ft.TextField(label="Stock Inicial", keyboard_type="number")
         
-        # 1. FUNCIÓN CREAR NUEVA MARCA (En tabla productos)
         def click_nueva_marca(e):
             txt_m = ft.TextField(label="Nombre Nueva Línea", autofocus=True)
-            
             def guardar_m(e):
                 if not txt_m.value: return
                 try:
                     conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                    # AQUI ESTA EL CAMBIO: Insertamos en PRODUCTOS (no en marcas)
-                    # Asumimos que productos es la tabla padre
                     c.execute("INSERT INTO productos (nombre) VALUES (%s)", (txt_m.value,))
                     conn.commit(); conn.close()
                     page.close(dlg_m)
                     page.snack_bar = ft.SnackBar(ft.Text("Línea Creada"), bgcolor="green"); page.snack_bar.open=True
-                    page.update()
-                    cargar_marcas_dropdown()
+                    page.update(); cargar_marcas_dropdown()
                 except Exception as ex: page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True; page.update()
-
             dlg_m = ft.AlertDialog(title=ft.Text("Nueva Línea"), content=txt_m, actions=[ft.ElevatedButton("CREAR", on_click=guardar_m)])
             page.open(dlg_m)
 
         def cargar_marcas_dropdown():
             try:
                 conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                # LEEMOS DE PRODUCTOS
                 c.execute("SELECT id, nombre FROM productos ORDER BY nombre")
                 dd_marcas.options = [ft.dropdown.Option(key=str(x[0]), text=x[1]) for x in c.fetchall()]
-                conn.close()
-                page.update()
+                conn.close(); page.update()
             except: pass
 
         def guardar_prod(e):
@@ -300,16 +287,13 @@ def main(page: ft.Page):
 
         vista_agregar = ft.ListView(expand=True, padding=20, spacing=15, controls=[
             ft.Text("Nuevo Producto", size=25, weight="bold"),
-            ft.Row([
-                dd_marcas, 
-                ft.IconButton(icon="add_circle", icon_color="blue", icon_size=40, on_click=click_nueva_marca)
-            ]),
-            ft.ElevatedButton("Refrescar Lista", icon="refresh", on_click=lambda e: cargar_marcas_dropdown()),
+            ft.Row([dd_marcas, ft.IconButton(icon="add_circle", icon_color="blue", icon_size=40, on_click=click_nueva_marca)]),
+            ft.ElevatedButton("Refrescar Líneas", icon="refresh", on_click=lambda e: cargar_marcas_dropdown()),
             txt_new_sku, txt_new_tono, txt_new_precio, txt_new_stock,
             ft.ElevatedButton("GUARDAR PRODUCTO", on_click=guardar_prod, height=50, bgcolor="blue", color="white")
         ])
 
-        # --- E. USUARIOS ---
+        # --- E. USUARIOS (INACTIVAR/ACTIVAR) ---
         col_users = ft.Column()
         txt_u_new = ft.TextField(label="Nuevo Usuario")
         txt_p_new = ft.TextField(label="Contraseña", password=True)
@@ -321,34 +305,66 @@ def main(page: ft.Page):
             try:
                 h = bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
                 conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                c.execute("INSERT INTO usuarios (username, password_hash, rol) VALUES (%s, %s, %s)", (u, h, r))
+                c.execute("INSERT INTO usuarios (username, password_hash, rol, activo) VALUES (%s, %s, %s, TRUE)", (u, h, r))
                 conn.commit(); conn.close()
                 page.snack_bar = ft.SnackBar(ft.Text("Usuario Creado"), bgcolor="green"); page.snack_bar.open=True
                 txt_u_new.value=""; txt_p_new.value=""; cargar_users()
             except Exception as ex: page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True
             page.update()
 
-        def eliminar_user(e):
+        # FUNCIÓN DE TOGGLE (BLOQUEAR/DESBLOQUEAR)
+        def toggle_status(e):
+            datos = e.control.data # {id: 1, activo: True}
+            uid = datos['id']
+            estado_actual = datos['activo']
+            if uid == usuario_actual_id: 
+                page.snack_bar = ft.SnackBar(ft.Text("No puedes bloquearte a ti mismo"), bgcolor="orange"); page.snack_bar.open=True; page.update(); return
+            
+            try:
+                nuevo_estado = not estado_actual
+                conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
+                c.execute("UPDATE usuarios SET activo = %s WHERE id = %s", (nuevo_estado, uid))
+                conn.commit(); conn.close()
+                msg = "Usuario Activado" if nuevo_estado else "Usuario Bloqueado"
+                page.snack_bar = ft.SnackBar(ft.Text(msg), bgcolor="blue" if nuevo_estado else "grey"); page.snack_bar.open=True
+                cargar_users()
+            except Exception as ex: page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True; page.update()
+
+        def eliminar_user_permanente(e):
             id_b = e.control.data
             if id_b == usuario_actual_id: return
             try:
                 conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
                 c.execute("DELETE FROM usuarios WHERE id=%s", (id_b,))
                 conn.commit(); conn.close()
-                page.snack_bar = ft.SnackBar(ft.Text("Eliminado"), bgcolor="blue"); page.snack_bar.open=True; cargar_users()
-            except: pass
-            page.update()
+                page.snack_bar = ft.SnackBar(ft.Text("Eliminado Permanentemente"), bgcolor="red"); page.snack_bar.open=True; cargar_users()
+            except: page.snack_bar = ft.SnackBar(ft.Text("Tiene ventas, usa el botón de BLOQUEAR"), bgcolor="orange"); page.snack_bar.open=True; page.update()
 
         def cargar_users():
             col_users.controls.clear()
             try:
                 conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                c.execute("SELECT id, username, rol FROM usuarios")
+                # OBTENEMOS EL ESTADO 'ACTIVO'
+                c.execute("SELECT id, username, rol, activo FROM usuarios ORDER BY id")
                 for r in c.fetchall():
-                    uid, uname, urol = r
+                    uid, uname, urol, activo = r
+                    
+                    # ICONO DE ESTADO
+                    icono_status = "check_circle" if activo else "block"
+                    color_status = "green" if activo else "grey"
+                    tooltip_status = "Bloquear" if activo else "Activar"
+                    
+                    # Estilo visual: si está inactivo, texto gris
+                    color_texto = "black" if activo else "grey"
+
                     col_users.controls.append(ft.Container(padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, "#eeeeee")), content=ft.Row([
-                        ft.Text(f"👤 {uname} ({urol})", size=16),
-                        ft.IconButton(icon="delete", icon_color="red", data=uid, on_click=eliminar_user)
+                        ft.Text(f"👤 {uname} ({urol})", size=16, color=color_texto),
+                        ft.Row([
+                            # BOTÓN TOGGLE (BLOQUEAR/DESBLOQUEAR)
+                            ft.IconButton(icon=icono_status, icon_color=color_status, tooltip=tooltip_status, data={'id': uid, 'activo': activo}, on_click=toggle_status),
+                            # BOTÓN ELIMINAR (SOLO SI ES NECESARIO)
+                            ft.IconButton(icon="delete", icon_color="red", tooltip="Eliminar Permanente", data=uid, on_click=eliminar_user_permanente)
+                        ])
                     ], alignment="spaceBetween")))
                 conn.close()
             except: pass
