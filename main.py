@@ -127,19 +127,56 @@ def main(page: ft.Page):
 
         def buscar_prod(e):
             global id_variante_seleccionada, precio_venta_seleccionado, nombre_producto_seleccionado
-            tono = txt_busqueda.value; id_variante_seleccionada = None
-            if not tono: return
+            texto_busqueda = txt_busqueda.value.strip() # Limpiamos espacios
+            
+            id_variante_seleccionada = None
+            
+            if not texto_busqueda: return
+
             try:
                 conn = psycopg2.connect(URL_CONEXION); c = conn.cursor()
-                c.execute("SELECT v.id, p.nombre, v.nombre_variante, v.precio_venta, i.stock_actual FROM variantes v JOIN productos p ON v.producto_id=p.id JOIN inventario i ON v.id=i.variante_id WHERE v.numero_tono=%s", (tono,))
-                r = c.fetchone(); conn.close()
+                
+                # --- CAMBIO IMPORTANTE AQUÍ ---
+                # Ahora buscamos por SKU (código) O por Numero de Tono
+                # Usamos ILIKE para que no importen las mayúsculas/minúsculas
+                query = """
+                    SELECT v.id, p.nombre, v.nombre_variante, v.precio_venta, i.stock_actual 
+                    FROM variantes v 
+                    JOIN productos p ON v.producto_id = p.id 
+                    JOIN inventario i ON v.id = i.variante_id 
+                    WHERE v.sku ILIKE %s OR v.numero_tono ILIKE %s
+                """
+                
+                # Pasamos el mismo texto dos veces: una para intentar calzar con SKU y otra con Tono
+                c.execute(query, (texto_busqueda, texto_busqueda))
+                
+                r = c.fetchone()
+                conn.close()
+                
                 if r:
-                    id_variante_seleccionada=r[0]; nombre_producto_seleccionado=f"{r[1]} {r[2]}"; precio_venta_seleccionado=float(r[3])
+                    id_variante_seleccionada = r[0]
+                    nombre_producto_seleccionado = f"{r[1]} {r[2]}"
+                    precio_venta_seleccionado = float(r[3])
+                    
                     info_prod.value = f"{r[1]} {r[2]}\nPrecio: ${r[3]}\nStock: {r[4]}"
-                    if r[4] > 0: btn_cobrar.visible=True; txt_tel.visible=True; btn_cobrar.disabled=False
-                    else: info_prod.value += " (AGOTADO)"; btn_cobrar.visible=False
-                else: info_prod.value = "No encontrado"; btn_cobrar.visible=False
-            except: pass
+                    info_prod.color = "black"
+                    
+                    # Lógica de stock (Visual)
+                    if r[4] > 0: 
+                        btn_cobrar.visible = True
+                        txt_tel.visible = True
+                        btn_cobrar.disabled = False
+                    else: 
+                        info_prod.value += " (AGOTADO)"
+                        info_prod.color = "red"
+                        btn_cobrar.visible = False
+                else: 
+                    info_prod.value = "❌ No encontrado"
+                    info_prod.color = "red"
+                    btn_cobrar.visible = False
+            except Exception as err:
+                info_prod.value = f"Error: {err}"
+            
             page.update()
 
         txt_busqueda = ft.TextField(label="Buscar Tono", on_submit=buscar_prod)
