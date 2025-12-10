@@ -95,7 +95,56 @@ def main(page: ft.Page):
             msg = f"Hola! Compra en Beauty POS.\nProducto: {nombre_prod}\nTotal: ${precio:,.2f}"
             page.launch_url(f"https://wa.me/{tel}?text={urllib.parse.quote(msg)}")
 
-        # --- A. LÓGICA DE VENTA ---
+        # -------------------------------------------
+        # A. VENTANA MODAL COMPARTIDA (STOCK)
+        # -------------------------------------------
+        # Creamos los controles UNA SOLA VEZ aquí
+        txt_stock_modal = ft.TextField(label="Nueva Cantidad", keyboard_type="number")
+        # Usamos una lista para guardar el ID seleccionado (truco para mutabilidad)
+        id_producto_editar = [None] 
+
+        def guardar_stock_db(e):
+            if id_producto_editar[0] is None: return
+            try:
+                nueva_cantidad = int(txt_stock_modal.value)
+                conn = psycopg2.connect(URL_CONEXION); cur = conn.cursor()
+                cur.execute("UPDATE inventario SET stock_actual = %s WHERE variante_id = %s", (nueva_cantidad, id_producto_editar[0]))
+                conn.commit(); conn.close()
+                
+                dlg_stock.open = False
+                page.snack_bar = ft.SnackBar(ft.Text("✅ Inventario actualizado"), bgcolor="green"); page.snack_bar.open=True
+                page.update()
+                cargar_inv() # Refrescar la lista de atrás
+            except Exception as ex:
+                page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True
+                page.update()
+
+        def cerrar_modal(e):
+            dlg_stock.open = False
+            page.update()
+
+        dlg_stock = ft.AlertDialog(
+            title=ft.Text("Ajustar Stock"),
+            content=txt_stock_modal,
+            actions=[
+                ft.TextButton("Cancelar", on_click=cerrar_modal),
+                ft.ElevatedButton("GUARDAR", on_click=guardar_stock_db)
+            ]
+        )
+
+        def abrir_modal_stock(e):
+            # Recuperamos datos del botón (Data pegada)
+            datos = e.control.data 
+            id_producto_editar[0] = datos['id']
+            txt_stock_modal.value = str(datos['qty'])
+            
+            page.dialog = dlg_stock
+            dlg_stock.open = True
+            page.update()
+
+        # -------------------------------------------
+        # B. LÓGICA DE VENTA
+        # -------------------------------------------
         def finalizar_venta(e):
             global id_variante_seleccionada, precio_venta_seleccionado
             tel = txt_tel.value.strip()
@@ -133,7 +182,6 @@ def main(page: ft.Page):
             except: pass
             page.update()
 
-        # VISTA VENDER
         txt_busqueda = ft.TextField(label="Buscar Tono", on_submit=buscar_prod)
         info_prod = ft.Text("", size=18, weight="bold")
         txt_tel = ft.TextField(label="WhatsApp Cliente", keyboard_type=ft.KeyboardType.PHONE, visible=False)
@@ -145,7 +193,7 @@ def main(page: ft.Page):
             ft.Divider(), info_prod, txt_tel, btn_cobrar
         ])
 
-        # --- B. REPORTE ---
+        # --- C. REPORTE ---
         col_reporte = ft.Column()
         def cargar_reporte():
             col_reporte.controls.clear()
@@ -170,53 +218,19 @@ def main(page: ft.Page):
             col_reporte
         ])
 
-        # --- C. INVENTARIO (LÓGICA BLINDADA CON DATA) ---
+        # --- D. INVENTARIO (LÓGICA CORREGIDA) ---
         col_inv = ft.Column()
         
-        def click_editar_stock(e):
-            # Recuperamos los datos pegados al botón
-            datos = e.control.data
-            id_producto = datos['id']
-            stock_actual = datos['stock']
-            
-            # Campo de texto local
-            txt_nuevo = ft.TextField(value=str(stock_actual), label="Nuevo Stock", keyboard_type="number", autofocus=True)
-            
-            def confirmar_cambio(e):
-                try:
-                    conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                    c.execute("UPDATE inventario SET stock_actual = %s WHERE variante_id = %s", (int(txt_nuevo.value), id_producto))
-                    conn.commit(); conn.close()
-                    page.dialog.open = False
-                    page.snack_bar = ft.SnackBar(ft.Text("✅ Stock actualizado"), bgcolor="green"); page.snack_bar.open=True
-                    page.update()
-                    cargar_inv()
-                except Exception as ex:
-                    page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True
-                    page.update()
-
-            dlg = ft.AlertDialog(
-                title=ft.Text("Editar Stock"),
-                content=txt_nuevo,
-                actions=[
-                    ft.TextButton("Cancelar", on_click=lambda e: setattr(page.dialog, 'open', False) or page.update()),
-                    ft.ElevatedButton("GUARDAR", on_click=confirmar_cambio)
-                ]
-            )
-            page.dialog = dlg
-            dlg.open = True
-            page.update()
-
-        def click_borrar_producto(e):
-            id_borrar = e.control.data
+        def borrar_item(e):
+            id_var = e.control.data
             try:
                 conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                c.execute("DELETE FROM inventario WHERE variante_id=%s", (id_borrar,))
-                c.execute("DELETE FROM variantes WHERE id=%s", (id_borrar,))
+                c.execute("DELETE FROM inventario WHERE variante_id=%s", (id_var,))
+                c.execute("DELETE FROM variantes WHERE id=%s", (id_var,))
                 conn.commit(); conn.close()
                 page.snack_bar = ft.SnackBar(ft.Text("Producto Eliminado"), bgcolor="blue"); page.snack_bar.open=True
                 cargar_inv()
-            except: page.snack_bar = ft.SnackBar(ft.Text("Error al borrar (¿Tiene ventas?)"), bgcolor="red"); page.snack_bar.open=True
+            except: page.snack_bar = ft.SnackBar(ft.Text("No se puede borrar (tiene ventas)"), bgcolor="red"); page.snack_bar.open=True
             page.update()
 
         def cargar_inv():
@@ -227,9 +241,9 @@ def main(page: ft.Page):
                 for r in c.fetchall():
                     vid, nom, ton, stk = r
                     
-                    # AQUÍ ESTÁ LA SOLUCIÓN: Usamos 'data' para guardar el ID en el botón
-                    btn_edit = ft.IconButton(icon="edit", icon_color="blue", data={"id": vid, "stock": stk}, on_click=click_editar_stock)
-                    btn_del = ft.IconButton(icon="delete", icon_color="red", data=vid, on_click=click_borrar_producto)
+                    # BOTONES CON DATA PEGADA (Solución del lápiz)
+                    btn_edit = ft.IconButton(icon="edit", icon_color="blue", data={'id': vid, 'qty': stk}, on_click=abrir_modal_stock)
+                    btn_del = ft.IconButton(icon="delete", icon_color="red", data=vid, on_click=borrar_item)
 
                     col_inv.controls.append(ft.Container(padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, "#eeeeee")), content=ft.Row([
                         ft.Column([ft.Text(f"{nom} - {ton}", weight="bold"), ft.Text(f"Stock: {stk}", color="blue" if stk>5 else "red")]),
@@ -245,21 +259,61 @@ def main(page: ft.Page):
             col_inv
         ])
 
-        # --- D. VISTA AGREGAR ---
+        # --- E. AGREGAR (CON FUNCIONALIDAD REAL) ---
+        dd_marcas = ft.Dropdown(label="Selecciona Línea", options=[])
         txt_new_sku = ft.TextField(label="SKU")
-        txt_new_tono = ft.TextField(label="Tono")
-        txt_new_precio = ft.TextField(label="Precio", keyboard_type="number")
-        txt_new_stock = ft.TextField(label="Stock", keyboard_type="number")
-        def guardar_nuevo(e):
-            page.snack_bar = ft.SnackBar(ft.Text("Función disponible en PC"), bgcolor="orange"); page.snack_bar.open=True; page.update()
+        txt_new_tono = ft.TextField(label="Tono (ej. 7.1)")
+        txt_new_precio = ft.TextField(label="Precio Venta", keyboard_type="number")
+        txt_new_stock = ft.TextField(label="Stock Inicial", keyboard_type="number")
+        
+        def cargar_marcas_dropdown():
+            try:
+                conn = psycopg2.connect(URL_CONEXION); cur = conn.cursor()
+                cur.execute("SELECT id, nombre FROM productos ORDER BY nombre")
+                # Llenamos el dropdown
+                dd_marcas.options = [ft.dropdown.Option(key=str(x[0]), text=x[1]) for x in cur.fetchall()]
+                conn.close()
+                page.update()
+            except: pass
+
+        def guardar_nuevo_producto_real(e):
+            if not dd_marcas.value or not txt_new_sku.value: 
+                page.snack_bar = ft.SnackBar(ft.Text("Falta Línea o SKU"), bgcolor="orange"); page.snack_bar.open=True; page.update(); return
+            
+            try:
+                conn = psycopg2.connect(URL_CONEXION); cur = conn.cursor()
+                
+                # 1. Crear Variante
+                cur.execute("INSERT INTO variantes (producto_id, sku, nombre_variante, numero_tono, precio_compra, precio_venta) VALUES (%s, %s, %s, %s, 0, %s) RETURNING id", 
+                            (dd_marcas.value, txt_new_sku.value, f"Tono {txt_new_tono.value}", txt_new_tono.value, float(txt_new_precio.value)))
+                new_id = cur.fetchone()[0]
+
+                # 2. Crear Inventario
+                cur.execute("INSERT INTO inventario (variante_id, stock_actual) VALUES (%s, %s)", (new_id, int(txt_new_stock.value)))
+                
+                conn.commit(); conn.close()
+                page.snack_bar = ft.SnackBar(ft.Text("✅ Producto Agregado"), bgcolor="green"); page.snack_bar.open=True
+                
+                # Limpiar campos
+                txt_new_sku.value=""; txt_new_tono.value=""; txt_new_precio.value=""; txt_new_stock.value=""
+                
+                if usuario_actual_rol in ["gerente", "admin"]: cargar_inv() # Actualizar inventario si existe la vista
+            except Exception as ex:
+                page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True
+            page.update()
 
         vista_agregar = ft.ListView(expand=True, padding=20, spacing=15, controls=[
             ft.Text("Nuevo Producto", size=25, weight="bold"),
-            txt_new_sku, txt_new_tono, txt_new_precio, txt_new_stock,
-            ft.ElevatedButton("GUARDAR (Solo PC)", on_click=guardar_nuevo, height=50)
+            ft.ElevatedButton("Cargar Marcas", icon="refresh", on_click=lambda e: cargar_marcas_dropdown()),
+            dd_marcas,
+            txt_new_sku, 
+            txt_new_tono, 
+            txt_new_precio, 
+            txt_new_stock,
+            ft.ElevatedButton("GUARDAR PRODUCTO", on_click=guardar_nuevo_producto_real, height=50, bgcolor="blue", color="white")
         ])
 
-        # --- E. VISTA USUARIOS (LÓGICA BLINDADA) ---
+        # --- F. VISTA USUARIOS ---
         col_users = ft.Column()
         txt_u_new = ft.TextField(label="Nuevo Usuario")
         txt_p_new = ft.TextField(label="Contraseña", password=True)
@@ -278,7 +332,7 @@ def main(page: ft.Page):
             except Exception as ex: page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True
             page.update()
 
-        def click_borrar_user(e):
+        def eliminar_user(e):
             id_borrar = e.control.data
             if id_borrar == usuario_actual_id: return
             try:
@@ -296,12 +350,9 @@ def main(page: ft.Page):
                 c.execute("SELECT id, username, rol FROM usuarios")
                 for r in c.fetchall():
                     uid, uname, urol = r
-                    # USAMOS DATA TAMBIÉN AQUÍ
-                    btn_del_user = ft.IconButton(icon="delete", icon_color="red", data=uid, on_click=click_borrar_user)
-                    
                     col_users.controls.append(ft.Container(padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, "#eeeeee")), content=ft.Row([
                         ft.Text(f"👤 {uname} ({urol})", size=16),
-                        btn_del_user
+                        ft.IconButton(icon="delete", icon_color="red", data=uid, on_click=eliminar_user)
                     ], alignment="spaceBetween")))
                 conn.close()
             except: pass
@@ -325,7 +376,7 @@ def main(page: ft.Page):
             label_sel = destinos[idx].label
             if label_sel == "Corte": cuerpo_principal.content = vista_reportes; cargar_reporte()
             elif label_sel == "Stock": cuerpo_principal.content = vista_inv; cargar_inv()
-            elif label_sel == "Alta": cuerpo_principal.content = vista_agregar
+            elif label_sel == "Alta": cuerpo_principal.content = vista_agregar; cargar_marcas_dropdown()
             elif label_sel == "Users": cuerpo_principal.content = vista_users; cargar_users()
             page.update()
 
