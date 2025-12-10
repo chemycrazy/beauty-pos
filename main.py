@@ -26,9 +26,6 @@ except AttributeError:
 usuario_actual_id = None; usuario_actual_nombre = ""; usuario_actual_rol = ""
 id_variante_seleccionada = None; precio_venta_seleccionado = 0.0; nombre_producto_seleccionado = "" 
 
-# Variable para saber qué ID estamos editando en el inventario
-id_para_editar_stock = None
-
 def main(page: ft.Page):
     page.title = "Beauty POS App"
     page.scroll = None 
@@ -173,49 +170,48 @@ def main(page: ft.Page):
             col_reporte
         ])
 
-        # --- C. INVENTARIO (CON EDICIÓN FUNCIONAL) ---
+        # --- C. INVENTARIO (CON EDICIÓN CORREGIDA) ---
         col_inv = ft.Column()
         
-        # Elementos para el dialogo de edición
-        txt_edit_cant = ft.TextField(label="Nueva Cantidad", keyboard_type="number", autofocus=True)
-        
-        def guardar_cambio_stock(e):
-            global id_para_editar_stock
-            if id_para_editar_stock is None: return
-            
-            try:
-                nuevo_stock = int(txt_edit_cant.value)
-                conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                c.execute("UPDATE inventario SET stock_actual = %s WHERE variante_id = %s", (nuevo_stock, id_para_editar_stock))
-                conn.commit(); conn.close()
-                
-                dlg_edit.open = False # Cerramos dialogo
-                page.snack_bar = ft.SnackBar(ft.Text("✅ Stock actualizado"), bgcolor="green"); page.snack_bar.open=True
-                cargar_inv() # Refrescamos lista
-            except Exception as ex:
-                page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True
-            page.update()
-
-        def cerrar_dlg(e):
-            dlg_edit.open = False
-            page.update()
-
-        # Dialogo definido una sola vez
-        dlg_edit = ft.AlertDialog(
-            title=ft.Text("Editar Stock"),
-            content=txt_edit_cant,
-            actions=[
-                ft.TextButton("Cancelar", on_click=cerrar_dlg),
-                ft.ElevatedButton("Guardar", on_click=guardar_cambio_stock)
-            ]
-        )
-
+        # Función para abrir el diálogo de edición (CORREGIDA)
         def abrir_dlg_edit(id_var, stock_actual):
-            global id_para_editar_stock
-            id_para_editar_stock = id_var # Guardamos ID en global
-            txt_edit_cant.value = str(stock_actual)
-            page.dialog = dlg_edit # Asignamos dialogo a la página
-            dlg_edit.open = True
+            
+            # 1. Campo de texto local para este dialogo
+            txt_nuevo_stock = ft.TextField(value=str(stock_actual), label="Nueva Cantidad", keyboard_type="number", autofocus=True)
+            
+            # 2. Función de guardar local
+            def guardar_cambio(e):
+                try:
+                    nuevo_valor = int(txt_nuevo_stock.value)
+                    conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
+                    c.execute("UPDATE inventario SET stock_actual = %s WHERE variante_id = %s", (nuevo_valor, id_var))
+                    conn.commit(); conn.close()
+                    
+                    page.dialog.open = False # Cerrar dialogo
+                    page.snack_bar = ft.SnackBar(ft.Text("✅ Stock actualizado"), bgcolor="green"); page.snack_bar.open=True
+                    page.update()
+                    cargar_inv() # Refrescar lista
+                except Exception as ex:
+                    page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True
+                    page.update()
+
+            def cerrar(e):
+                page.dialog.open = False
+                page.update()
+
+            # 3. Crear el dialogo fresco
+            dlg = ft.AlertDialog(
+                title=ft.Text("Editar Stock"),
+                content=txt_nuevo_stock,
+                actions=[
+                    ft.TextButton("Cancelar", on_click=cerrar),
+                    ft.ElevatedButton("Guardar", on_click=guardar_cambio)
+                ]
+            )
+            
+            # 4. Asignar y abrir
+            page.dialog = dlg
+            dlg.open = True
             page.update()
 
         def borrar_item(id_var):
@@ -239,7 +235,6 @@ def main(page: ft.Page):
                     col_inv.controls.append(ft.Container(padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, "#eeeeee")), content=ft.Row([
                         ft.Column([ft.Text(f"{nom} - {ton}", weight="bold"), ft.Text(f"Stock: {stk}", color="blue" if stk>5 else "red")]),
                         ft.Row([
-                            # Aquí pasamos el ID y el STOCK a la función de abrir dialogo
                             ft.IconButton(icon="edit", icon_color="blue", on_click=lambda e, x=vid, y=stk: abrir_dlg_edit(x, y)),
                             ft.IconButton(icon="delete", icon_color="red", on_click=lambda e, x=vid: borrar_item(x))
                         ])
@@ -259,11 +254,8 @@ def main(page: ft.Page):
         txt_new_tono = ft.TextField(label="Tono")
         txt_new_precio = ft.TextField(label="Precio", keyboard_type="number")
         txt_new_stock = ft.TextField(label="Stock", keyboard_type="number")
-        # Aquí faltaba la lógica real de guardado, la agrego para que sea útil
-        # Ojo: Necesita un ID de producto padre. Por simplicidad en móvil asumimos un ID genérico o habría que poner un dropdown.
-        # Por seguridad en esta versión "Lite", dejamos el mensaje de PC, pero el layout ya está.
         def guardar_nuevo(e):
-            page.snack_bar = ft.SnackBar(ft.Text("Usa la PC para dar de alta (Más seguro)"), bgcolor="orange"); page.snack_bar.open=True; page.update()
+            page.snack_bar = ft.SnackBar(ft.Text("Función disponible en PC"), bgcolor="orange"); page.snack_bar.open=True; page.update()
 
         vista_agregar = ft.ListView(expand=True, padding=20, spacing=15, controls=[
             ft.Text("Nuevo Producto", size=25, weight="bold"),
@@ -271,10 +263,10 @@ def main(page: ft.Page):
             ft.ElevatedButton("GUARDAR (Solo PC)", on_click=guardar_nuevo, height=50)
         ])
 
-        # --- E. VISTA USUARIOS (CORREGIDA) ---
+        # --- E. VISTA USUARIOS (RESTAURADA) ---
         col_users = ft.Column()
         
-        # 1. FORMULARIO DE CREACIÓN (Ahora sí visible)
+        # Formulario de creación
         txt_u_new = ft.TextField(label="Nuevo Usuario")
         txt_p_new = ft.TextField(label="Contraseña", password=True)
         dd_rol = ft.Dropdown(label="Rol", options=[ft.dropdown.Option("vendedor"), ft.dropdown.Option("gerente"), ft.dropdown.Option("admin")], value="vendedor")
@@ -317,21 +309,14 @@ def main(page: ft.Page):
             except: pass
             page.update()
 
-        # ESTRUCTURA DE LA PESTAÑA USUARIOS
+        # Estructura visual de usuarios
         vista_users = ft.ListView(expand=True, padding=20, spacing=15, controls=[
             ft.Text("Gestión Usuarios", size=25, weight="bold"),
-            # SECCIÓN CREAR
-            ft.Text("Registrar Nuevo:", weight="bold", size=16),
-            txt_u_new, 
-            txt_p_new, 
-            dd_rol,
+            ft.Text("Crear Nuevo:", weight="bold"),
+            txt_u_new, txt_p_new, dd_rol,
             ft.ElevatedButton("CREAR USUARIO", on_click=crear_user, height=50),
             ft.Divider(),
-            # SECCIÓN LISTA
-            ft.Row([
-                ft.Text("Lista Actual", weight="bold", size=18),
-                ft.IconButton(icon="refresh", on_click=lambda e: cargar_users())
-            ], alignment="spaceBetween"),
+            ft.Row([ft.Text("Lista Actual", weight="bold", size=18), ft.IconButton(icon="refresh", on_click=lambda e: cargar_users())], alignment="spaceBetween"),
             col_users
         ])
 
@@ -363,17 +348,14 @@ def main(page: ft.Page):
             global usuario_actual_id; usuario_actual_id = None; page.clean(); page.add(vista_login)
 
         page.add(
-            ft.Column(
-                expand=True, spacing=0,
-                controls=[
-                    ft.Container(padding=10, bgcolor="purple", content=ft.Row([
-                        ft.Text(f"Hola, {usuario_actual_nombre}", weight="bold", color="white"),
-                        ft.IconButton(icon="logout", icon_color="white", on_click=cerrar_sesion)
-                    ], alignment="spaceBetween")),
-                    cuerpo_principal,
-                    nav_bar
-                ]
-            )
+            ft.Column(expand=True, spacing=0, controls=[
+                ft.Container(padding=10, bgcolor="purple", content=ft.Row([
+                    ft.Text(f"Hola, {usuario_actual_nombre}", weight="bold", color="white"),
+                    ft.IconButton(icon="logout", icon_color="white", on_click=cerrar_sesion)
+                ], alignment="spaceBetween")),
+                cuerpo_principal,
+                nav_bar
+            ])
         )
 
     page.add(vista_login)
