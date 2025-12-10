@@ -95,7 +95,7 @@ def main(page: ft.Page):
             msg = f"Hola! Compra en Beauty POS.\nProducto: {nombre_prod}\nTotal: ${precio:,.2f}"
             page.launch_url(f"https://wa.me/{tel}?text={urllib.parse.quote(msg)}")
 
-        # --- A. VENTA ---
+        # --- A. LÓGICA DE VENTA ---
         def finalizar_venta(e):
             global id_variante_seleccionada, precio_venta_seleccionado
             tel = txt_tel.value.strip()
@@ -133,6 +133,7 @@ def main(page: ft.Page):
             except: pass
             page.update()
 
+        # VISTA VENDER
         txt_busqueda = ft.TextField(label="Buscar Tono", on_submit=buscar_prod)
         info_prod = ft.Text("", size=18, weight="bold")
         txt_tel = ft.TextField(label="WhatsApp Cliente", keyboard_type=ft.KeyboardType.PHONE, visible=False)
@@ -169,59 +170,53 @@ def main(page: ft.Page):
             col_reporte
         ])
 
-        # --- C. INVENTARIO (CRUD COMPLETO Y CORREGIDO) ---
+        # --- C. INVENTARIO (LÓGICA BLINDADA CON DATA) ---
         col_inv = ft.Column()
         
-        # FUNCIÓN PARA ABRIR DIALOGO DINÁMICO (Esta es la corrección)
-        def abrir_dlg_edit(id_var_actual, stock_actual):
+        def click_editar_stock(e):
+            # Recuperamos los datos pegados al botón
+            datos = e.control.data
+            id_producto = datos['id']
+            stock_actual = datos['stock']
             
-            # 1. Crear el campo de texto LOCALMENTE
-            txt_nuevo_stk = ft.TextField(value=str(stock_actual), label="Nuevo Stock", keyboard_type="number", autofocus=True)
+            # Campo de texto local
+            txt_nuevo = ft.TextField(value=str(stock_actual), label="Nuevo Stock", keyboard_type="number", autofocus=True)
             
-            # 2. Función de guardar encapsulada
-            def guardar_cambio_interno(e):
+            def confirmar_cambio(e):
                 try:
-                    nuevo_val = int(txt_nuevo_stk.value)
                     conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                    c.execute("UPDATE inventario SET stock_actual = %s WHERE variante_id = %s", (nuevo_val, id_var_actual))
+                    c.execute("UPDATE inventario SET stock_actual = %s WHERE variante_id = %s", (int(txt_nuevo.value), id_producto))
                     conn.commit(); conn.close()
-                    
-                    page.dialog.open = False # Cerrar
-                    page.update()
+                    page.dialog.open = False
                     page.snack_bar = ft.SnackBar(ft.Text("✅ Stock actualizado"), bgcolor="green"); page.snack_bar.open=True
-                    cargar_inv() # Refrescar
+                    page.update()
+                    cargar_inv()
                 except Exception as ex:
                     page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True
                     page.update()
 
-            def cerrar_interno(e):
-                page.dialog.open = False
-                page.update()
-
-            # 3. Crear el Dialogo NUEVO
             dlg = ft.AlertDialog(
                 title=ft.Text("Editar Stock"),
-                content=txt_nuevo_stk,
+                content=txt_nuevo,
                 actions=[
-                    ft.TextButton("Cancelar", on_click=cerrar_interno),
-                    ft.ElevatedButton("GUARDAR", on_click=guardar_cambio_interno)
+                    ft.TextButton("Cancelar", on_click=lambda e: setattr(page.dialog, 'open', False) or page.update()),
+                    ft.ElevatedButton("GUARDAR", on_click=confirmar_cambio)
                 ]
             )
-            
-            # 4. Asignar y abrir
             page.dialog = dlg
             dlg.open = True
             page.update()
 
-        def borrar_item(id_var):
+        def click_borrar_producto(e):
+            id_borrar = e.control.data
             try:
                 conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                c.execute("DELETE FROM inventario WHERE variante_id=%s", (id_var,))
-                c.execute("DELETE FROM variantes WHERE id=%s", (id_var,))
+                c.execute("DELETE FROM inventario WHERE variante_id=%s", (id_borrar,))
+                c.execute("DELETE FROM variantes WHERE id=%s", (id_borrar,))
                 conn.commit(); conn.close()
                 page.snack_bar = ft.SnackBar(ft.Text("Producto Eliminado"), bgcolor="blue"); page.snack_bar.open=True
                 cargar_inv()
-            except: page.snack_bar = ft.SnackBar(ft.Text("No se puede borrar (tiene ventas)"), bgcolor="red"); page.snack_bar.open=True
+            except: page.snack_bar = ft.SnackBar(ft.Text("Error al borrar (¿Tiene ventas?)"), bgcolor="red"); page.snack_bar.open=True
             page.update()
 
         def cargar_inv():
@@ -232,18 +227,14 @@ def main(page: ft.Page):
                 for r in c.fetchall():
                     vid, nom, ton, stk = r
                     
-                    # CREAMOS LA FILA CON BOTONES QUE LLAMAN A LA FUNCIÓN DINÁMICA
-                    col_inv.controls.append(ft.Container(
-                        padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, "#eeeeee")), 
-                        content=ft.Row([
-                            ft.Column([ft.Text(f"{nom} - {ton}", weight="bold"), ft.Text(f"Stock: {stk}", color="blue" if stk>5 else "red")]),
-                            ft.Row([
-                                # AQUÍ ESTÁ LA CLAVE: Lambda captura los valores actuales
-                                ft.IconButton(icon="edit", icon_color="blue", on_click=lambda e, x=vid, y=stk: abrir_dlg_edit(x, y)),
-                                ft.IconButton(icon="delete", icon_color="red", on_click=lambda e, x=vid: borrar_item(x))
-                            ])
-                        ], alignment="spaceBetween")
-                    ))
+                    # AQUÍ ESTÁ LA SOLUCIÓN: Usamos 'data' para guardar el ID en el botón
+                    btn_edit = ft.IconButton(icon="edit", icon_color="blue", data={"id": vid, "stock": stk}, on_click=click_editar_stock)
+                    btn_del = ft.IconButton(icon="delete", icon_color="red", data=vid, on_click=click_borrar_producto)
+
+                    col_inv.controls.append(ft.Container(padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, "#eeeeee")), content=ft.Row([
+                        ft.Column([ft.Text(f"{nom} - {ton}", weight="bold"), ft.Text(f"Stock: {stk}", color="blue" if stk>5 else "red")]),
+                        ft.Row([btn_edit, btn_del])
+                    ], alignment="spaceBetween")))
                 conn.close()
             except: pass
             page.update()
@@ -268,7 +259,7 @@ def main(page: ft.Page):
             ft.ElevatedButton("GUARDAR (Solo PC)", on_click=guardar_nuevo, height=50)
         ])
 
-        # --- E. VISTA USUARIOS (RESTAURADA) ---
+        # --- E. VISTA USUARIOS (LÓGICA BLINDADA) ---
         col_users = ft.Column()
         txt_u_new = ft.TextField(label="Nuevo Usuario")
         txt_p_new = ft.TextField(label="Contraseña", password=True)
@@ -284,7 +275,19 @@ def main(page: ft.Page):
                 conn.commit(); conn.close()
                 page.snack_bar = ft.SnackBar(ft.Text("Usuario Creado"), bgcolor="green"); page.snack_bar.open=True
                 txt_u_new.value=""; txt_p_new.value=""; cargar_users()
-            except Exception as ex: page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True; page.update()
+            except Exception as ex: page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True
+            page.update()
+
+        def click_borrar_user(e):
+            id_borrar = e.control.data
+            if id_borrar == usuario_actual_id: return
+            try:
+                conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
+                c.execute("DELETE FROM usuarios WHERE id=%s", (id_borrar,))
+                conn.commit(); conn.close()
+                page.snack_bar = ft.SnackBar(ft.Text("Usuario eliminado"), bgcolor="blue"); page.snack_bar.open=True; cargar_users()
+            except: pass
+            page.update()
 
         def cargar_users():
             col_users.controls.clear()
@@ -293,21 +296,14 @@ def main(page: ft.Page):
                 c.execute("SELECT id, username, rol FROM usuarios")
                 for r in c.fetchall():
                     uid, uname, urol = r
+                    # USAMOS DATA TAMBIÉN AQUÍ
+                    btn_del_user = ft.IconButton(icon="delete", icon_color="red", data=uid, on_click=click_borrar_user)
+                    
                     col_users.controls.append(ft.Container(padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, "#eeeeee")), content=ft.Row([
                         ft.Text(f"👤 {uname} ({urol})", size=16),
-                        ft.IconButton(icon="delete", icon_color="red", on_click=lambda e, x=uid: eliminar_user(x))
+                        btn_del_user
                     ], alignment="spaceBetween")))
                 conn.close()
-            except: pass
-            page.update()
-
-        def eliminar_user(id_borrar):
-            if id_borrar == usuario_actual_id: return
-            try:
-                conn = psycopg2.connect(URL_CONEXION); c=conn.cursor()
-                c.execute("DELETE FROM usuarios WHERE id=%s", (id_borrar,))
-                conn.commit(); conn.close()
-                page.snack_bar = ft.SnackBar(ft.Text("Usuario eliminado"), bgcolor="blue"); page.snack_bar.open=True; cargar_users()
             except: pass
             page.update()
 
@@ -348,17 +344,14 @@ def main(page: ft.Page):
             global usuario_actual_id; usuario_actual_id = None; page.clean(); page.add(vista_login)
 
         page.add(
-            ft.Column(
-                expand=True, spacing=0,
-                controls=[
-                    ft.Container(padding=10, bgcolor="purple", content=ft.Row([
-                        ft.Text(f"Hola, {usuario_actual_nombre}", weight="bold", color="white"),
-                        ft.IconButton(icon="logout", icon_color="white", on_click=cerrar_sesion)
-                    ], alignment="spaceBetween")),
-                    cuerpo_principal,
-                    nav_bar
-                ]
-            )
+            ft.Column(expand=True, spacing=0, controls=[
+                ft.Container(padding=10, bgcolor="purple", content=ft.Row([
+                    ft.Text(f"Hola, {usuario_actual_nombre}", weight="bold", color="white"),
+                    ft.IconButton(icon="logout", icon_color="white", on_click=cerrar_sesion)
+                ], alignment="spaceBetween")),
+                cuerpo_principal,
+                nav_bar
+            ])
         )
 
     page.add(vista_login)
