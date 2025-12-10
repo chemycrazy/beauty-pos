@@ -75,14 +75,14 @@ def main(page: ft.Page):
 
     txt_user_login = ft.TextField(label="Usuario", width=300)
     txt_pass_login = ft.TextField(label="Contraseña", password=True, width=300)
-    btn_login = ft.ElevatedButton("ENTRAR", on_click=verificar_login, bgcolor="blue", color="white", width=300, height=50)
+    btn_login = ft.ElevatedButton("ENTRAR", on_click=verificar_login, bgcolor="purple", color="white", width=300, height=50)
     lbl_error_login = ft.Text("", color="red")
 
     vista_login = ft.Container(
         alignment=ft.alignment.center, padding=20,
         content=ft.Column([
             ft.Container(height=50),
-            ft.Icon(name="spa", size=80, color="blue"),
+            ft.Icon(name="spa", size=80, color="purple"),
             ft.Text("Beauty POS", size=30, weight="bold"), 
             ft.Container(height=30),
             txt_user_login, txt_pass_login, 
@@ -149,7 +149,7 @@ def main(page: ft.Page):
         
         vista_ventas = ft.ListView(expand=True, padding=20, spacing=15, controls=[
             ft.Text("Punto de Venta", size=25, weight="bold"),
-            ft.Row([txt_busqueda, ft.IconButton(icon="search", on_click=buscar_prod, icon_color="blue")]),
+            ft.Row([txt_busqueda, ft.IconButton(icon="search", on_click=buscar_prod, icon_color="purple")]),
             ft.Divider(), info_prod, txt_tel, btn_cobrar
         ])
 
@@ -173,7 +173,7 @@ def main(page: ft.Page):
                         ft.Row([ft.Text(f"{r[3]}", weight="bold"), ft.Text(f"${r[1]}", weight="bold", color="green")], alignment="spaceBetween"),
                         ft.Row([ft.Text(f"Fecha: {r[0]}", size=12), ft.Text(f"Tel: {r[2] if r[2] else '-'}", size=12)], alignment="spaceBetween")
                     ])))
-                col_reporte.controls.insert(0, ft.Container(bgcolor="#e3f2fd", padding=15, border_radius=10, content=ft.Row([ft.Text(titulo, size=18), ft.Text(f"${total:,.2f}", size=22, weight="bold", color="blue")], alignment="spaceBetween")))
+                col_reporte.controls.insert(0, ft.Container(bgcolor="#e3f2fd", padding=15, border_radius=10, content=ft.Row([ft.Text(titulo, size=18), ft.Text(f"${total:,.2f}", size=22, weight="bold", color="purple")], alignment="spaceBetween")))
                 conn.close()
             except Exception as e: col_reporte.controls.append(ft.Text(f"Error carga: {e}", color="red"))
             page.update()
@@ -212,7 +212,7 @@ def main(page: ft.Page):
                 c.execute("DELETE FROM inventario WHERE variante_id=%s", (id_var,))
                 c.execute("DELETE FROM variantes WHERE id=%s", (id_var,))
                 conn.commit(); conn.close()
-                page.snack_bar = ft.SnackBar(ft.Text("Eliminado"), bgcolor="blue"); page.snack_bar.open=True
+                page.snack_bar = ft.SnackBar(ft.Text("Eliminado"), bgcolor="purple"); page.snack_bar.open=True
                 cargar_inv()
             except: page.snack_bar = ft.SnackBar(ft.Text("No se puede borrar (tiene ventas)"), bgcolor="red"); page.snack_bar.open=True; page.update()
 
@@ -223,10 +223,10 @@ def main(page: ft.Page):
                 c.execute("SELECT v.id, p.nombre, v.numero_tono, i.stock_actual FROM variantes v JOIN productos p ON v.producto_id=p.id JOIN inventario i ON v.id=i.variante_id ORDER BY p.nombre, v.numero_tono")
                 for r in c.fetchall():
                     vid, nom, ton, stk = r
-                    btn_edit = ft.IconButton(icon="edit", icon_color="blue", data={'id': vid, 'stock': stk}, on_click=click_lapiz_stock)
+                    btn_edit = ft.IconButton(icon="edit", icon_color="purple", data={'id': vid, 'stock': stk}, on_click=click_lapiz_stock)
                     btn_del = ft.IconButton(icon="delete", icon_color="red", data=vid, on_click=borrar_item)
                     col_inv.controls.append(ft.Container(padding=10, border=ft.border.only(bottom=ft.border.BorderSide(1, "#eeeeee")), content=ft.Row([
-                        ft.Column([ft.Text(f"{nom} - {ton}", weight="bold"), ft.Text(f"Stock: {stk}", color="blue" if stk>5 else "red")]),
+                        ft.Column([ft.Text(f"{nom} - {ton}", weight="bold"), ft.Text(f"Stock: {stk}", color="purple" if stk>5 else "red")]),
                         ft.Row([btn_edit, btn_del])
                     ], alignment="spaceBetween")))
                 conn.close()
@@ -287,10 +287,10 @@ def main(page: ft.Page):
 
         vista_agregar = ft.ListView(expand=True, padding=20, spacing=15, controls=[
             ft.Text("Nuevo Producto", size=25, weight="bold"),
-            ft.Row([dd_marcas, ft.IconButton(icon="add_circle", icon_color="blue", icon_size=40, on_click=click_nueva_marca)]),
+            ft.Row([dd_marcas, ft.IconButton(icon="add_circle", icon_color="purple", icon_size=40, on_click=click_nueva_marca)]),
             ft.ElevatedButton("Refrescar Líneas", icon="refresh", on_click=lambda e: cargar_marcas_dropdown()),
             txt_new_sku, txt_new_tono, txt_new_precio, txt_new_stock,
-            ft.ElevatedButton("GUARDAR PRODUCTO", on_click=guardar_prod, height=50, bgcolor="blue", color="white")
+            ft.ElevatedButton("GUARDAR PRODUCTO", on_click=guardar_prod, height=50, bgcolor="purple", color="white")
         ])
 
         # --- E. USUARIOS (INACTIVAR/ACTIVAR) ---
@@ -326,7 +326,7 @@ def main(page: ft.Page):
                 c.execute("UPDATE usuarios SET activo = %s WHERE id = %s", (nuevo_estado, uid))
                 conn.commit(); conn.close()
                 msg = "Usuario Activado" if nuevo_estado else "Usuario Bloqueado"
-                page.snack_bar = ft.SnackBar(ft.Text(msg), bgcolor="blue" if nuevo_estado else "grey"); page.snack_bar.open=True
+                page.snack_bar = ft.SnackBar(ft.Text(msg), bgcolor="purple" if nuevo_estado else "grey"); page.snack_bar.open=True
                 cargar_users()
             except Exception as ex: page.snack_bar = ft.SnackBar(ft.Text(f"Error: {ex}"), bgcolor="red"); page.snack_bar.open=True; page.update()
 
@@ -408,7 +408,7 @@ def main(page: ft.Page):
 
         page.add(
             ft.Column(expand=True, spacing=0, controls=[
-                ft.Container(padding=10, bgcolor="blue", content=ft.Row([
+                ft.Container(padding=10, bgcolor="purple", content=ft.Row([
                     ft.Text(f"Hola, {usuario_actual_nombre}", weight="bold", color="white"),
                     ft.IconButton(icon="logout", icon_color="white", on_click=cerrar_sesion)
                 ], alignment="spaceBetween")),
